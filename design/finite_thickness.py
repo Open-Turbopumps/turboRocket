@@ -29,3 +29,5 @@ if __name__ == "__main__":
     # super.plot_scaled()
 
     df = super.generate_xy()
+    
+    #test
