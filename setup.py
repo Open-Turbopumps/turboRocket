@@ -24,7 +24,7 @@ setup(
         'matplotlib',
         'scipy',
         'pandas',
-        'yaml'
+        'pyyaml'
         ],
     
     keywords=['python', 'rocket propulsion', 'LRE', 'turbomachinery'],
