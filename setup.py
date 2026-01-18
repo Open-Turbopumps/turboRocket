@@ -21,7 +21,10 @@ setup(
     install_requires=[
         'numpy',
         'cantera',
-        'matplotlib'
+        'matplotlib',
+        'scipy',
+        'pandas',
+        'yaml'
         ],
     
     keywords=['python', 'rocket propulsion', 'LRE', 'turbomachinery'],
