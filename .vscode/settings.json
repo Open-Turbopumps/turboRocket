@@ -1,0 +1,4 @@
+{
+  "autoDocstring.docstringFormat": "google",
+  "python.formatting.provider": "black"
+}

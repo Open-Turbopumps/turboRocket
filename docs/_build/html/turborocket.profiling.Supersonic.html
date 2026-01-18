@@ -1,0 +1,238 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="./">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>turborocket.profiling.Supersonic package &mdash; turboRocket 0.1 documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="_static/jquery.js?v=5d32c60e"></script>
+      <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="_static/documentation_options.js?v=2709fde1"></script>
+      <script src="_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="turborocket.sizing package" href="turborocket.sizing.html" />
+    <link rel="prev" title="turborocket.profiling package" href="turborocket.profiling.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="index.html" class="icon icon-home">
+            turboRocket
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="reference internal" href="modules.html">src</a><ul class="current">
+<li class="toctree-l2 current"><a class="reference internal" href="turborocket.html">turborocket package</a><ul class="current">
+<li class="toctree-l3 current"><a class="reference internal" href="turborocket.html#subpackages">Subpackages</a><ul class="current">
+<li class="toctree-l4"><a class="reference internal" href="turborocket.characteristic.html">turborocket.characteristic package</a></li>
+<li class="toctree-l4"><a class="reference internal" href="turborocket.combustion.html">turborocket.combustion package</a></li>
+<li class="toctree-l4"><a class="reference internal" href="turborocket.fluids.html">turborocket.fluids package</a></li>
+<li class="toctree-l4 current"><a class="reference internal" href="turborocket.profiling.html">turborocket.profiling package</a></li>
+<li class="toctree-l4"><a class="reference internal" href="turborocket.sizing.html">turborocket.sizing package</a></li>
+<li class="toctree-l4"><a class="reference internal" href="turborocket.solvers.html">turborocket.solvers package</a></li>
+<li class="toctree-l4"><a class="reference internal" href="turborocket.tools.html">turborocket.tools package</a></li>
+<li class="toctree-l4"><a class="reference internal" href="turborocket.transient.html">turborocket.transient package</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="turborocket.html#module-turborocket">Module contents</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">turboRocket</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="modules.html">src</a></li>
+          <li class="breadcrumb-item"><a href="turborocket.html">turborocket package</a></li>
+          <li class="breadcrumb-item"><a href="turborocket.profiling.html">turborocket.profiling package</a></li>
+      <li class="breadcrumb-item active">turborocket.profiling.Supersonic package</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/turborocket.profiling.Supersonic.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="turborocket-profiling-supersonic-package">
+<h1>turborocket.profiling.Supersonic package<a class="headerlink" href="#turborocket-profiling-supersonic-package" title="Link to this heading"></a></h1>
+<section id="submodules">
+<h2>Submodules<a class="headerlink" href="#submodules" title="Link to this heading"></a></h2>
+</section>
+<section id="module-turborocket.profiling.Supersonic.circular">
+<span id="turborocket-profiling-supersonic-circular-module"></span><h2>turborocket.profiling.Supersonic.circular module<a class="headerlink" href="#module-turborocket.profiling.Supersonic.circular" title="Link to this heading"></a></h2>
+<p>Circular.py</p>
+<p>This source file encapsulates all the functions required for sizing the circular sections of the tubrine blade, following the free vortex assumption.</p>
+<p>The following equations follows the method for supersonic turbine design presented in NASA TN D-4421.</p>
+<p>Free vortex flow is assumed for the blade flow.</p>
+<p># noqa: E501</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="turborocket.profiling.Supersonic.circular.A_rat">
+<span class="sig-prename descclassname"><span class="pre">turborocket.profiling.Supersonic.circular.</span></span><span class="sig-name descname"><span class="pre">A_rat</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">beta_i</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">beta_o</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/turborocket/profiling/Supersonic/circular.html#A_rat"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#turborocket.profiling.Supersonic.circular.A_rat" title="Link to this definition"></a></dt>
+<dd><p>The Area Ratio (A_i / A_o)</p>
+<p>This equation computes the area ratio of the supersonic turbine blade, assuming that the spacings are equal on the inlet and exit sides of the turbine (Axial turbine)</p>
+<p># noqa: E501</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="turborocket.profiling.Supersonic.circular.M_star">
+<span class="sig-prename descclassname"><span class="pre">turborocket.profiling.Supersonic.circular.</span></span><span class="sig-name descname"><span class="pre">M_star</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">gamma</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">M</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/turborocket/profiling/Supersonic/circular.html#M_star"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#turborocket.profiling.Supersonic.circular.M_star" title="Link to this definition"></a></dt>
+<dd><p>Critical Velocity Ratio</p>
+<p>This function computes the critical velocity ratio of the flow as a function of Mach number and specific heat ratio.</p>
+<dl class="simple">
+<dt>Variables:</dt><dd><p>gamma:  Specific Heat Ratio
+M:      Mach Number</p>
+</dd>
+</dl>
+<p># noqa: E501</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="turborocket.profiling.Supersonic.circular.arc_angles_lower">
+<span class="sig-prename descclassname"><span class="pre">turborocket.profiling.Supersonic.circular.</span></span><span class="sig-name descname"><span class="pre">arc_angles_lower</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">beta_o</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">beta_i</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">v_i</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">v_o</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">v_l</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/turborocket/profiling/Supersonic/circular.html#arc_angles_lower"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#turborocket.profiling.Supersonic.circular.arc_angles_lower" title="Link to this definition"></a></dt>
+<dd><p>Lower Circular Arc Angles Alpha</p>
+<p>This function computes the arc angles based on the inlet and outlet angles, coupled with their prantl-meyer angles</p>
+<dl class="simple">
+<dt>Variables:</dt><dd><p>alpha_l_i:  Lower Arc Inlet Angle
+alpha_l_o:  Lower Arc Outlet Angle
+alpha_u_i:  Upper Arc Inlet Angle
+alpha_u_o:  Upper Arc Outlet Angle
+beta_i:     Inlet relative flow angle
+beta_o:     Exit relative</p>
+</dd>
+</dl>
+<p># noqa: E501</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="turborocket.profiling.Supersonic.circular.arc_angles_upper">
+<span class="sig-prename descclassname"><span class="pre">turborocket.profiling.Supersonic.circular.</span></span><span class="sig-name descname"><span class="pre">arc_angles_upper</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">beta_o</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">beta_i</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">v_i</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">v_o</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">v_u</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/turborocket/profiling/Supersonic/circular.html#arc_angles_upper"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#turborocket.profiling.Supersonic.circular.arc_angles_upper" title="Link to this definition"></a></dt>
+<dd><p>Upper Circular Arc Angles Alpha</p>
+<p>This function computes the circular arc angles based on the inlet and outlet angles,
+coupled with their prantl-meyer angles</p>
+<dl class="simple">
+<dt>Variables:</dt><dd><p>alpha_l_i:  Lower Arc Inlet Angle
+alpha_l_o:  Lower Arc Outlet Angle
+alpha_u_i:  Upper Arc Inlet Angle
+alpha_u_o:  Upper Arc Outlet Angle
+beta_i:     Inlet relative flow angle
+beta_o:     Exit relative</p>
+</dd>
+</dl>
+<p># noqa: E501</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="turborocket.profiling.Supersonic.circular.beta_o">
+<span class="sig-prename descclassname"><span class="pre">turborocket.profiling.Supersonic.circular.</span></span><span class="sig-name descname"><span class="pre">beta_o</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">M_i</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">M_o</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">gamma</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">beta_i</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/turborocket/profiling/Supersonic/circular.html#beta_o"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#turborocket.profiling.Supersonic.circular.beta_o" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="turborocket.profiling.Supersonic.circular.inv_M_star">
+<span class="sig-prename descclassname"><span class="pre">turborocket.profiling.Supersonic.circular.</span></span><span class="sig-name descname"><span class="pre">inv_M_star</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">gamma</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">M_star</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/turborocket/profiling/Supersonic/circular.html#inv_M_star"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#turborocket.profiling.Supersonic.circular.inv_M_star" title="Link to this definition"></a></dt>
+<dd><p>This function computes the mach number based on the critical velocity ratio.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>gamma</strong> (<em>float</em>) – Specific Heat Ratio</p></li>
+<li><p><strong>M_star</strong> (<em>float</em>) – Crtical Velocity ratio</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="turborocket.profiling.Supersonic.circular.prandtl_meyer">
+<span class="sig-prename descclassname"><span class="pre">turborocket.profiling.Supersonic.circular.</span></span><span class="sig-name descname"><span class="pre">prandtl_meyer</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">gamma</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">crit_vel_rat</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/turborocket/profiling/Supersonic/circular.html#prandtl_meyer"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#turborocket.profiling.Supersonic.circular.prandtl_meyer" title="Link to this definition"></a></dt>
+<dd><p>Prandtl Meyer Angle (v)</p>
+<p>This function computes the Prandtl-Meyer angle v based on the mach number of a flow.</p>
+<p># noqa: E501</p>
+</dd></dl>
+
+</section>
+<section id="turborocket-profiling-supersonic-constraints-module">
+<h2>turborocket.profiling.Supersonic.constraints module<a class="headerlink" href="#turborocket-profiling-supersonic-constraints-module" title="Link to this heading"></a></h2>
+</section>
+<section id="turborocket-profiling-supersonic-fixed-edge-module">
+<h2>turborocket.profiling.Supersonic.fixed_edge module<a class="headerlink" href="#turborocket-profiling-supersonic-fixed-edge-module" title="Link to this heading"></a></h2>
+</section>
+<section id="turborocket-profiling-supersonic-supersonic-profile-module">
+<h2>turborocket.profiling.Supersonic.supersonic_profile module<a class="headerlink" href="#turborocket-profiling-supersonic-supersonic-profile-module" title="Link to this heading"></a></h2>
+</section>
+<section id="turborocket-profiling-supersonic-transition-module">
+<h2>turborocket.profiling.Supersonic.transition module<a class="headerlink" href="#turborocket-profiling-supersonic-transition-module" title="Link to this heading"></a></h2>
+</section>
+<section id="module-turborocket.profiling.Supersonic">
+<span id="module-contents"></span><h2>Module contents<a class="headerlink" href="#module-turborocket.profiling.Supersonic" title="Link to this heading"></a></h2>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="turborocket.profiling.html" class="btn btn-neutral float-left" title="turborocket.profiling package" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="turborocket.sizing.html" class="btn btn-neutral float-right" title="turborocket.sizing package" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2026, Elias Aoubala, Craig Orrock.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
