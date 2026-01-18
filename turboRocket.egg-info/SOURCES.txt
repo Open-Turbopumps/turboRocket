@@ -1,8 +1,0 @@
-LICENSE
-README.md
-setup.py
-src/turborocket/__init__.py
-turboRocket.egg-info/PKG-INFO
-turboRocket.egg-info/SOURCES.txt
-turboRocket.egg-info/dependency_links.txt
-turboRocket.egg-info/top_level.txt

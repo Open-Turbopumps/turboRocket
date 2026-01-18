@@ -16,12 +16,12 @@ setup(
     description=DESCRIPTION,
     long_description_content_type="text/markdown",
     long_description=LONG_DESCRIPTION,
-    packages=['turborocket'],
-    package_dir={'turborocket': 'src/turborocket'},
-    
+    package_dir={"": "src"},
+    packages=find_packages(where="src"),
     install_requires=[
         'numpy',
         'cantera',
+        'matplotlib'
         ],
     
     keywords=['python', 'rocket propulsion', 'LRE', 'turbomachinery'],
