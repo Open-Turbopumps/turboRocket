@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 import codecs
 import os
 
-VERSION = '0.0.1'
+VERSION = '0.0.2'
 DESCRIPTION = 'A turbomachinery design package.'
 LONG_DESCRIPTION = 'A tool-set package for the design of turbomachinery components, for use in liquid rocket engine design.'
 
