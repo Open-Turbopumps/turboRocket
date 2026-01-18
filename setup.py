@@ -18,8 +18,14 @@ setup(
     long_description=LONG_DESCRIPTION,
     packages=['turborocket'],
     package_dir={'turborocket': 'src/turborocket'},
-    install_requires=[''],
+    
+    install_requires=[
+        'numpy',
+        'cantera',
+        ],
+    
     keywords=['python', 'rocket propulsion', 'LRE', 'turbomachinery'],
+    
     classifiers=[
         "Development Status :: 1 - Planning",
         "Intended Audience :: Developers",
