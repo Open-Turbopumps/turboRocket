@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from numpy import trapz
+from numpy import trapezoid as trapz
 
 
 def adjoint(func, x_guess, dx, n, relax, target, params=[], RECORD_HIST=False):
