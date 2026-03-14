@@ -162,7 +162,12 @@ class Barske:
 
         # Now Defining our Diffuser Parameters
         self._v_3 = v_3f * self._u_2
+        
         self._a_3 = self._m_dot / (rho * self._v_3)
+        
+        print(f"v_3: {self._v_3}")
+        print(f"A_3: {self._a_3}")
+        
         self._a_4 = self._a_3 * a_3f
 
         # We figure out what the dimensions of the diffuser are:

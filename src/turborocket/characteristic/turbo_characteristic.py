@@ -2,7 +2,7 @@
 This file contains the classes used for the generation of the Turbopump Cycle Characteristics
 """
 
-from turborocket.transient.start_up import (
+from turborocket.components.start_up import (
     GasGenerator,
     Pump,
     Turbine,
