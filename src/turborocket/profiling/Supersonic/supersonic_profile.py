@@ -761,11 +761,17 @@ class SupersonicProfile:
 
         fig, ax = plt.subplots()
 
+        if self._clock_flag:
+            angle = self._deflection
+        else:
+            angle = 0
+
+        dl = self._g_star + self._t
         # We then plot our results
 
         ax.plot(
-            self._vortex_l_coord[:, 0],
-            self._vortex_l_coord[:, 1],
+            self._vortex_l_coord[:, 0] + dl * np.sin(angle),
+            self._vortex_l_coord[:, 1] + dl * np.cos(angle) - self._p,
             label="Lower Circular Arc",
         )
         ax.plot(
@@ -773,18 +779,26 @@ class SupersonicProfile:
             self._vortex_u_coord[:, 1],
             label="Upper Circular Arc",
         )
-        ax.plot(self._l_i_coord[:, 0], self._l_i_coord[:, 1], label="Inlet Lower")
+        ax.plot(
+            self._l_i_coord[:, 0] + dl * np.sin(angle),
+            self._l_i_coord[:, 1] + dl * np.cos(angle) - self._p,
+            label="Inlet Lower",
+        )
         ax.plot(self._u_i_coord[:, 0], self._u_i_coord[:, 1], label="Inlet Upper")
-        ax.plot(self._l_o_coord[:, 0], self._l_o_coord[:, 1], label="Outlet Lower")
+        ax.plot(
+            self._l_o_coord[:, 0] + dl * np.sin(angle),
+            self._l_o_coord[:, 1] + dl * np.cos(angle) - self._p,
+            label="Outlet Lower",
+        )
         ax.plot(self._u_o_coord[:, 0], self._u_o_coord[:, 1], label="Outlet Upper")
         ax.plot(
-            self._straight_i_coord[:, 0],
-            self._straight_i_coord[:, 1],
+            self._straight_i_coord[:, 0] + dl * np.sin(angle),
+            self._straight_i_coord[:, 1] + dl * np.cos(angle) - self._p,
             label="Inlet Line",
         )
         ax.plot(
-            self._straight_o_coord[:, 0],
-            self._straight_o_coord[:, 1],
+            self._straight_o_coord[:, 0] + dl * np.sin(angle),
+            self._straight_o_coord[:, 1] + dl * np.cos(angle) - self._p,
             label="Outlet Line",
         )
 
@@ -882,6 +896,117 @@ class SupersonicProfile:
 
         return
 
+    def generate_cfd(self, sf: float = 1e3) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Function that generates the boundaries of the domain of the turbine for a CFD Based simulation
+
+        Args:
+            sf (float, optional): Scaling Factor for Co-Ordinates. Defaults to 1e3.
+
+        Returns:
+            tuple[pd.DataFrame, pd.DataFrame]: Tuple of dataframes of the upstream and downstream sections of the turbine.
+        """
+        # We simply need to create a master x-array and y-array, create a pandas dataframe, then export as csv
+        x_array_l = np.array([])
+        y_array_l = np.array([])
+        z_array_l = np.array([])
+
+        if self._clock_flag:
+            angle = self._deflection
+        else:
+            angle = 0
+
+        dl = self._g_star + self._t
+
+        # Inlet Line
+        x_array_l = np.append(
+            x_array_l, self._straight_i_coord[::-1, 0] + dl * np.sin(angle)
+        )
+        y_array_l = np.append(
+            y_array_l, self._straight_i_coord[::-1, 1] + dl * np.cos(angle) - self._p
+        )
+
+        # Inlet Transition
+        x_array_l = np.append(
+            x_array_l, self._l_i_coord[-2:1:-1, 0] + dl * np.sin(angle)
+        )
+        y_array_l = np.append(
+            y_array_l, self._l_i_coord[-2:1:-1, 1] + dl * np.cos(angle) - self._p
+        )
+
+        # Lower Vortex
+        x_array_l = np.append(
+            x_array_l, self._vortex_l_coord[1:, 0] + dl * np.sin(angle)
+        )
+        y_array_l = np.append(
+            y_array_l, self._vortex_l_coord[1:, 1] + dl * np.cos(angle) - self._p
+        )
+
+        # Outlet Transition
+        x_array_l = np.append(x_array_l, self._l_o_coord[1:, 0] + dl * np.sin(angle))
+        y_array_l = np.append(
+            y_array_l, self._l_o_coord[1:, 1] + dl * np.cos(angle) - self._p
+        )
+
+        # Outlet Line
+        x_array_l = np.append(
+            x_array_l, self._straight_o_coord[1:, 0] + dl * np.sin(angle)
+        )
+        y_array_l = np.append(
+            y_array_l, self._straight_o_coord[1:, 1] + dl * np.cos(angle) - self._p
+        )
+
+        ######################
+        # Upper Leading Edge #
+        ######################
+
+        x_array_u = np.array([])
+        y_array_u = np.array([])
+        z_array_u = np.array([])
+
+        # Leading Edge
+        x_array_u = np.append(x_array_u, self._LE_coord[:1:-1, 0])
+        y_array_u = np.append(y_array_u, self._LE_coord[:1:-1, 1])
+
+        # Upper Inlet Transition
+        x_array_u = np.append(x_array_u, self._u_i_coord[:1:-1, 0])
+        y_array_u = np.append(y_array_u, self._u_i_coord[:1:-1, 1])
+
+        # Upper Vortex
+        x_array_u = np.append(x_array_u, self._vortex_u_coord[:, 0])
+        y_array_u = np.append(y_array_u, self._vortex_u_coord[:, 1])
+
+        # Upper outlet transition
+        x_array_u = np.append(x_array_u, self._u_o_coord[:, 0])
+        y_array_u = np.append(y_array_u, self._u_o_coord[:, 1])
+
+        # Trailing Edge
+        x_array_u = np.append(x_array_u, self._TE_coord[:-1, 0])
+        y_array_u = np.append(y_array_u, self._TE_coord[:-1, 1])
+
+        # We then offset our x and y array
+        x_offset = x_array_l.max() - 0.5 * (x_array_l.max() - x_array_l.min())
+        y_offset = y_array_u.max() - 0.5 * (y_array_u.max() - y_array_l.min())
+
+        x_array_l -= x_offset
+        y_array_l -= y_offset
+
+        x_array_u -= x_offset
+        y_array_u -= y_offset
+
+        # We now scale our geometries
+        x_array_l *= sf
+        y_array_l *= sf
+        x_array_u *= sf
+        y_array_u *= sf
+
+        z_array_l = np.zeros(x_array_l.size)
+        z_array_u = np.zeros(x_array_u.size)
+
+        df_l = pd.DataFrame(data={"x": x_array_l, "y": y_array_l, "z": z_array_l})
+        df_u = pd.DataFrame(data={"x": x_array_u, "y": y_array_u, "z": z_array_u})
+
+        return (df_l, df_u)
+
     def generate_xy(self, sf: float = 1e3) -> pd.DataFrame:
         """Function that generates an x-y data frame of the co-ordinates of the turbine, that can be either plotted or used accordingly.
 
@@ -946,8 +1071,8 @@ class SupersonicProfile:
         y_array = np.append(y_array, self._u_i_coord[:, 1])
 
         # We then offset our x and y array
-        x_array -= 0.5 * (x_array.max() - x_array.min())
-        y_array -= 0.5 * (y_array.max() - y_array.min())
+        x_array -= x_array.max() - 0.5 * (x_array.max() - x_array.min())
+        y_array -= y_array.max() - 0.5 * (y_array.max() - y_array.min())
 
         # We now scale our geometries
         x_array *= sf
@@ -975,6 +1100,7 @@ class SupersonicProfile:
         # Firstly we unpack our arrays
         m_i_star, m_o_star = m_r_star
         m_u_star, m_l_star = m_s_star
+        print(m_u_star)
 
         # We evaluate for our maximum inlet mach number
         m_i_s_max = self.get_M_i_star_max(
@@ -993,12 +1119,12 @@ class SupersonicProfile:
                 f"Blade cannot start as maximum inlet mach number is nominally exceeded. {m_i_star} > {m_i_s_max}"
             )
 
-        elif m_u_star > m_u_s_max:
+        elif m_u_star < m_l_s_min:
             raise ValueError(
                 f"Maxium upper surface mach number exceeded for flow seperation. {m_u_star} > {m_u_s_max}"
             )
 
-        elif m_l_star < m_l_s_min:
+        elif m_l_star > m_u_s_max:
             raise ValueError(
                 f"Minimum lower surface mach number exceed for flow seperation. {m_l_star} < {m_l_s_min}"
             )
@@ -1012,10 +1138,10 @@ class SupersonicProfile:
         print(f"M_i_star_max: {m_i_s_max}\n")
 
         print(f"M_u_star: {m_u_star}")
-        print(f"M_u_star_max: {m_u_s_max}\n")
+        print(f"M_u_star_min: {m_l_s_min}\n")
 
         print(f"M_l_star: {m_l_star}")
-        print(f"M_l_star_min: {m_l_s_min}")
+        print(f"M_l_star_max: {m_u_s_max}")
 
     def size_geometry(
         self, D_m: float, N: int | None = None, b: float | None = None
@@ -1575,81 +1701,6 @@ class SupersonicProfile:
         ax.legend()
         ax.set_aspect("equal")
         plt.show()
-
-    def generate_cfd(self, t_lead: float, t_trail: float) -> dict[str, pd.DataFrame]:
-        """Function that generates the domain for a CFD Based simulation of the blade passage
-
-        Args:
-            t_lead (float): Upstream axial distance to include in domain (mm)
-            t_trail (float): Downstream axial distance to include in domain (mm)
-
-        Returns:
-            dict[str, pd.DataFrame]: Dictionary containing the dataframes of the upper surface, lower surface and inlet/oulet points
-        """
-
-        ################################################## Upper Surface ##################################################
-
-        x_array_upper = np.array([])
-        y_array_upper = np.array([])
-        z_array_upper = np.array([])
-
-        # We plot the Leading Edge Array,
-        x_array_upper = np.append(x_array_upper, self._x_i_line_sf[::-1])
-        y_array_upper = np.append(y_array_upper, self._y_i_line_sf_cfd[::-1])
-
-        # The then go to the inlet upper Transition
-        x_array_upper = np.append(x_array_upper, (self._xlkt_iu_sf)[-2:1:-1])
-        y_array_upper = np.append(y_array_upper, (self._ylkt_iu_sf_cfd)[-2:1:-1])
-
-        # # We then do the inlet Upper Circular element
-        x_array_upper = np.append(x_array_upper, self._x_u_array_sf)
-        y_array_upper = np.append(y_array_upper, self._y_u_array_sf_cfd)
-
-        # # We then do the outlet Upper Transition
-        x_array_upper = np.append(x_array_upper, self._xlkt_ou_sf[1:-1])
-        y_array_upper = np.append(y_array_upper, self._ylkt_ou_sf_cfd[1:-1])
-
-        # # We plote the Trailing Edge Array,
-        x_array_upper = np.append(x_array_upper, self._x_o_line_sf)
-        y_array_upper = np.append(y_array_upper, self._y_o_line_sf_cfd)
-
-        z_array_upper = np.zeros(x_array_upper.size)
-
-        df_upper = pd.DataFrame(
-            data={"x": x_array_upper, "y": y_array_upper, "z": z_array_upper}
-        )
-
-        ################################################# Lower Surface #################################################
-
-        x_array_lower = np.array([])
-        y_array_lower = np.array([])
-        z_array_lower = np.array([])
-
-        x_array_lower = np.append(x_array_lower, self._x_i_line_sf[-1])
-        y_array_lower = np.append(y_array_lower, self._y_i_line_sf[-1])
-
-        # We then do the inlet lower transition element
-        x_array_lower = np.append(x_array_lower, (self._xlkt_il_sf)[1:-2][::-1])
-        y_array_lower = np.append(y_array_lower, (self._ylkt_il_sf)[1:-2][::-1])
-
-        # We then do the lower circular element
-        x_array_lower = np.append(x_array_lower, (self._x_l_array_sf)[::-1])
-        y_array_lower = np.append(y_array_lower, (self._y_l_array_sf)[::-1])
-
-        # We then do the outlet lower transition
-        x_array_lower = np.append(x_array_lower, self._xlkt_ol_sf[-1:1:-1][::-1])
-        y_array_lower = np.append(y_array_lower, self._ylkt_ol_sf[-1:1:-1][::-1])
-
-        z_array_lower = np.zeros(x_array_lower.size)
-
-        df_lower = pd.DataFrame(
-            data={"x": x_array_lower, "y": y_array_lower, "z": z_array_lower}
-        )
-
-        ################################################# Upstream and Downstream Zones #################################################
-
-        h_inner = t_lead / np.tan(self._beta_i)
-        # TODO: Rest of the work
 
     def plot_normalised(self):
         # This function plots the circular arcs for visual inspection
