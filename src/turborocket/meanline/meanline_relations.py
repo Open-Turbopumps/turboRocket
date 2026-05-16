@@ -6,7 +6,14 @@ from turborocket.fluids.fluids import IdealGas
 import numpy as np
 from typing import List
 
-from turborocket.fluids.isentropic_relations import isen_expansion_dh, isen_expansion_cis, isen_static_t_M_star, isen_static_p_M_Star, isen_static_p_M
+from turborocket.fluids.isentropic_relations import (
+    isen_expansion_dh,
+    isen_expansion_cis,
+    isen_static_t_M_star,
+    isen_static_p_M_Star,
+    isen_static_p_M,
+)
+
 
 class TurbineStageDesign:
     """
@@ -105,7 +112,9 @@ class TurbineStageDesign:
         Returns:
             float: Isentropic spouting velocity of the gas
         """
-        dh = isen_expansion_dh(fluid = self._gas, p_0=self._gas.p, p_1=self.get_p1(), t_0=self._gas.t)
+        dh = isen_expansion_dh(
+            fluid=self._gas, p_0=self._gas.p, p_1=self.get_p1(), t_0=self._gas.t
+        )
         self._cis = isen_expansion_cis(dh=dh)
 
         return self._cis
@@ -123,7 +132,7 @@ class TurbineStageDesign:
 
         if self._cis is None:
             self._cis = self.get_isentropic_spouting()
-            
+
         self._c1 = phi * self._cis
 
         return self._c1
@@ -152,15 +161,19 @@ class TurbineStageDesign:
 
         if m_star is not None:
             # We use the m_star provided
-            
-            t_static = isen_static_t_M_star(fluid = self._gas, t_0=self._gas.t, M_star =m_star)
+
+            t_static = isen_static_t_M_star(
+                fluid=self._gas, t_0=self._gas.t, M_star=m_star
+            )
 
             return t_static
 
         self._a_star_1 = self._gas.c_sonic
 
-        self._t1 = isen_static_t_M_star(fluid = self._gas, t_0=self._gas.t,
-            M_star=self.get_m_star(a_star=self._a_star_1, c=self._c1)
+        self._t1 = isen_static_t_M_star(
+            fluid=self._gas,
+            t_0=self._gas.t,
+            M_star=self.get_m_star(a_star=self._a_star_1, c=self._c1),
         )
 
         return self._t1
@@ -178,19 +191,14 @@ class TurbineStageDesign:
         m_1a = self._c1 / self._a_star_1
 
         p_rat_is = self._gas.p / isen_static_p_M_Star(
-                fluid=self._gas, 
-                p_0=self._gas.p, 
-                M_star=m_1is
-            )
+            fluid=self._gas, p_0=self._gas.p, M_star=m_1is
+        )
 
         p_rat_a = self._gas.p / isen_static_p_M_Star(
-                fluid=self._gas, 
-                p_0=self._gas.p, 
-                M_star=m_1a
-            )
+            fluid=self._gas, p_0=self._gas.p, M_star=m_1a
+        )
 
         self._po_1 = po * (p_rat_is / p_rat_a)
-        
 
         return self._po_1
 
@@ -213,9 +221,7 @@ class TurbineStageDesign:
             float: Throat Static Pressure of the Nozzle (m^2)
         """
 
-        self._p_throat = (
-            isen_static_p_M(fluid=self._gas, p_0=self._gas.p, M=1)
-        )
+        self._p_throat = isen_static_p_M(fluid=self._gas, p_0=self._gas.p, M=1)
 
         return self._p_throat
 
@@ -226,7 +232,9 @@ class TurbineStageDesign:
             float: Static Throat Temperature
         """
 
-        self._t_throat = isen_static_t_M_star(fluid = self._gas, t_0=self._gas.t, M_star=1)
+        self._t_throat = isen_static_t_M_star(
+            fluid=self._gas, t_0=self._gas.t, M_star=1
+        )
 
         return self._t_throat
 
@@ -405,18 +413,18 @@ class TurbineStageDesign:
 
         p_rat_c1 = (
             isen_static_p_M_Star(
-                fluid=self._gas, 
-                p_0=self._gas.p, 
-                M_star=self.get_m_star(a_star=self._a_star_1, c=self._c1)
+                fluid=self._gas,
+                p_0=self._gas.p,
+                M_star=self.get_m_star(a_star=self._a_star_1, c=self._c1),
             )
             / po
         )
 
         p_rat_w1 = (
             isen_static_p_M_Star(
-                fluid=self._gas, 
-                p_0=self._gas.p, 
-                M_star=self.get_m_star(a_star=self._a_star_2, c=self._w1)
+                fluid=self._gas,
+                p_0=self._gas.p,
+                M_star=self.get_m_star(a_star=self._a_star_2, c=self._w1),
             )
             / po
         )
@@ -469,18 +477,18 @@ class TurbineStageDesign:
 
         p_rat_w1 = (
             isen_static_p_M_Star(
-                fluid=self._gas, 
-                p_0=self._gas.p, 
-                M_star=self.get_m_star(a_star=self._a_star_2, c=self._w1)
+                fluid=self._gas,
+                p_0=self._gas.p,
+                M_star=self.get_m_star(a_star=self._a_star_2, c=self._w1),
             )
             / po
         )
 
         p_rat_w2 = (
             isen_static_p_M_Star(
-                fluid=self._gas, 
-                p_0=self._gas.p, 
-                M_star=self.get_m_star(a_star=self._a_star_2, c=self._w2)
+                fluid=self._gas,
+                p_0=self._gas.p,
+                M_star=self.get_m_star(a_star=self._a_star_2, c=self._w2),
             )
             / po
         )
@@ -591,12 +599,10 @@ class TurbineStageDesign:
 
         m_star_c2 = self.get_m_star(a_star=self._a_star_3, c=self._c2)
 
-        p_rat_c2 = isen_static_p_M_Star(
-            fluid=self._gas, 
-            p_0=self._gas.p, 
-            M_star=m_star_c2
-        ) / self._gas.p
-        
+        p_rat_c2 = (
+            isen_static_p_M_Star(fluid=self._gas, p_0=self._gas.p, M_star=m_star_c2)
+            / self._gas.p
+        )
 
         self._po_2 = self._p2 / p_rat_c2
 
@@ -650,6 +656,8 @@ class TurbineStageDesign:
             float: Efficiency factor of the system
         """
 
+        print(self._alpha * 180 / (np.pi))
+
         self._eta_h = (
             2
             * (self._phi**2)
@@ -657,6 +665,9 @@ class TurbineStageDesign:
             * (np.cos(self._alpha) - (self._u / self._c1))
             * (1 + self._phi_r * (np.cos(self._beta_2) / np.cos(self._beta_1)))
         )
+
+        print(f"beta_2: {self._beta_1}")
+        print(f"beta_1: {self._beta_2}")
 
         return self._eta_h
 
@@ -697,7 +708,13 @@ class TurbineStageDesign:
             float: Power Produced from Turbine
         """
 
-        self._p = self._eta * isen_expansion_dh(fluid = self._gas, p_0=self._gas.p, p_1=self._p1, t_0=self._gas.t) * self._m_dot
+        self._p = (
+            self._eta
+            * isen_expansion_dh(
+                fluid=self._gas, p_0=self._gas.p, p_1=self._p1, t_0=self._gas.t
+            )
+            * self._m_dot
+        )
 
         return self._p
 
@@ -722,7 +739,9 @@ class TurbineStageDesign:
 
         pressure_dict["p_1"] = self.get_p1()
 
-        performance_dict["dh"] = isen_expansion_dh(fluid = self._gas, p_0=self._gas.p, p_1=self._p1, t_0=self._gas.t)
+        performance_dict["dh"] = isen_expansion_dh(
+            fluid=self._gas, p_0=self._gas.p, p_1=self._p1, t_0=self._gas.t
+        )
 
         velocities_dict["u"] = self.get_blade_speed()
 

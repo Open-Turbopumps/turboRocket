@@ -896,15 +896,24 @@ class SupersonicProfile:
 
         return
 
-    def generate_cfd(self, sf: float = 1e3) -> tuple[pd.DataFrame, pd.DataFrame]:
+    def generate_cfd(
+        self, upwind: float, down_wind: float, sf: float = 1
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Function that generates the boundaries of the domain of the turbine for a CFD Based simulation
 
         Args:
-            sf (float, optional): Scaling Factor for Co-Ordinates. Defaults to 1e3.
+            upwind (float): Upwind Lenght of Turbine Profile [ scaled co-ordinates ]
+            downwind (float): Downwind Length of Turbine Profile [ scaled co-ordinates ]
+            sf (float, optional): Scaling Factor for Co-Ordinates. Defaults to 1.
 
         Returns:
             tuple[pd.DataFrame, pd.DataFrame]: Tuple of dataframes of the upstream and downstream sections of the turbine.
         """
+        # We can evaluate fot he leading edge and trailing edge split
+        mid_le = len(self._LE_coord) // 2
+        mid_te = len(self._TE_coord) // 2
+
+
         # We simply need to create a master x-array and y-array, create a pandas dataframe, then export as csv
         x_array_l = np.array([])
         y_array_l = np.array([])
@@ -916,6 +925,10 @@ class SupersonicProfile:
             angle = 0
 
         dl = self._g_star + self._t
+
+        # Leading Edge
+        x_array_l = np.append(x_array_l, self._LE_coord[mid_le:-1:1, 0])
+        y_array_l = np.append(y_array_l, self._LE_coord[mid_le:-1:1, 1] - self._p)
 
         # Inlet Line
         x_array_l = np.append(
@@ -955,6 +968,10 @@ class SupersonicProfile:
             y_array_l, self._straight_o_coord[1:, 1] + dl * np.cos(angle) - self._p
         )
 
+        # Trailing Edge
+        x_array_l = np.append(x_array_l, self._TE_coord[-1:mid_te:-1, 0])
+        y_array_l = np.append(y_array_l, self._TE_coord[-1:mid_te:-1, 1] - self._p)
+
         ######################
         # Upper Leading Edge #
         ######################
@@ -964,8 +981,8 @@ class SupersonicProfile:
         z_array_u = np.array([])
 
         # Leading Edge
-        x_array_u = np.append(x_array_u, self._LE_coord[:1:-1, 0])
-        y_array_u = np.append(y_array_u, self._LE_coord[:1:-1, 1])
+        x_array_u = np.append(x_array_u, self._LE_coord[mid_le:1:-1, 0])
+        y_array_u = np.append(y_array_u, self._LE_coord[mid_le:1:-1, 1])
 
         # Upper Inlet Transition
         x_array_u = np.append(x_array_u, self._u_i_coord[:1:-1, 0])
@@ -980,8 +997,8 @@ class SupersonicProfile:
         y_array_u = np.append(y_array_u, self._u_o_coord[:, 1])
 
         # Trailing Edge
-        x_array_u = np.append(x_array_u, self._TE_coord[:-1, 0])
-        y_array_u = np.append(y_array_u, self._TE_coord[:-1, 1])
+        x_array_u = np.append(x_array_u, self._TE_coord[:mid_te, 0])
+        y_array_u = np.append(y_array_u, self._TE_coord[:mid_te, 1])
 
         # We then offset our x and y array
         x_offset = x_array_l.max() - 0.5 * (x_array_l.max() - x_array_l.min())
@@ -999,13 +1016,47 @@ class SupersonicProfile:
         x_array_u *= sf
         y_array_u *= sf
 
+        # We then evaluate for our upwind and downwind points, based on our beta angles.
+
+        # We get the co-ordinates of the leading edge points
+        le_point_lower = (x_array_l[0], y_array_l[0])
+        le_point_upper = (x_array_u[0], y_array_u[0])
+
+        te_point_lower = (x_array_l[-1], y_array_l[-1])
+        te_point_upper = (x_array_u[-1], y_array_u[-1])
+
+        le_dy = -upwind * np.tan(self._beta_i)
+        te_dy = down_wind * np.tan(self._beta_o + self._deflection)
+
+        le_upwind_lower = (le_point_lower[0] - upwind, le_point_lower[1] - le_dy)
+        le_upwind_upper = (le_point_upper[0] - upwind, le_point_upper[1] - le_dy)
+
+        te_down_wind_lower = (te_point_lower[0] + down_wind, le_point_lower[1] - te_dy)
+        te_down_wind_upper = (te_point_upper[0] + down_wind, le_point_upper[1] - te_dy)
+
+        # We can now create the data frame
+        df_inlet = pd.DataFrame(
+            data={
+                "x": [le_upwind_lower[0], le_upwind_upper[0]],
+                "y": [le_upwind_lower[1], le_upwind_upper[1]],
+                "z": [0, 0],
+            }
+        )
+        df_outlet = pd.DataFrame(
+            data={
+                "x": [te_down_wind_lower[0], te_down_wind_upper[0]],
+                "y": [te_down_wind_lower[1], te_down_wind_upper[1]],
+                "z": [0, 0],
+            }
+        )
+
         z_array_l = np.zeros(x_array_l.size)
         z_array_u = np.zeros(x_array_u.size)
 
         df_l = pd.DataFrame(data={"x": x_array_l, "y": y_array_l, "z": z_array_l})
         df_u = pd.DataFrame(data={"x": x_array_u, "y": y_array_u, "z": z_array_u})
 
-        return (df_l, df_u)
+        return (df_l, df_u, df_inlet, df_outlet)
 
     def generate_xy(self, sf: float = 1e3) -> pd.DataFrame:
         """Function that generates an x-y data frame of the co-ordinates of the turbine, that can be either plotted or used accordingly.
