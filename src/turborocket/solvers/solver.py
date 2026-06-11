@@ -11,7 +11,6 @@ def adjoint(func, x_guess, dx, n, relax, target, params=[], RECORD_HIST=False):
     error_hist = []
     error_grad_hist = []
     dx_hist = []
-
     # We first evaluate the error of the guess
     guess = func(x_guess, *params)
 
@@ -41,8 +40,12 @@ def adjoint(func, x_guess, dx, n, relax, target, params=[], RECORD_HIST=False):
             break
 
         # based on this gradient, we can thus find the new x-step based on this gradient # noqa: E501
-
-        dx = -(1 / error_grad) * error_hist[k] * relax
+        # print(f"guess: {guess}")
+        # print(f"Integration Error: {error}")
+        if error_grad == 0:
+            dx = dx_hist[-1]
+        else:
+            dx = -(1 / error_grad) * error_hist[k] * relax
 
     if RECORD_HIST is True:
         plt.plot(x_hist, error_hist)

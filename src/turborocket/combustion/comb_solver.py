@@ -256,7 +256,7 @@ class CombustionCantera:
             cv = self._gas.cv_mass
             gamma = cp / cv
 
-        gas = IdealGas(p=Pcc, t=T_o, gamma=gamma, R=R, cp=cp)
+        gas = IdealGas(name="exhaust", p=Pcc, t=T_o, gamma=gamma, R=R, cp=cp)
 
         return gas
 
@@ -275,7 +275,6 @@ class CombustionCantera:
         Returns:
             IdealGas: Ideal Gas Object
         """
-
         Pcc = float(Pcc)
         MR = float(MR)
 

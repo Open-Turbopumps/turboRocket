@@ -3,18 +3,18 @@
 from turborocket.profiling.Supersonic.circular import (
     prandtl_meyer,
     M_star,
-    arc_angles_upper,
-    arc_angles_lower,
+    vortex_flow_angles,
     inv_M_star,
+    beta_o,
 )
 
-from turborocket.profiling.Supersonic.transition import moc, moc_2
+from turborocket.profiling.Supersonic.transition import method_of_characteristics
 
 from turborocket.profiling.Supersonic.constraints import inv_mass_flow, r_star
 from turborocket.profiling.Supersonic.constraints import (
     k_star_max,
-    Q,
-    C,
+    Q_factor,
+    C_factor,
     shock_pressure_rat,
     M_i_star_max,
 )
@@ -22,7 +22,10 @@ from turborocket.profiling.Supersonic.constraints import M_star_u_max, M_star_l_
 
 from turborocket.fluids.fluids import IdealGas
 
-from turborocket.profiling.Supersonic.fixed_edge import get_m_e
+from turborocket.profiling.Supersonic.fixed_edge import (
+    get_beta_e,
+    oblique_shock_area_rat,
+)
 
 import numpy as np
 import math
@@ -33,264 +36,1326 @@ import pandas as pd
 from scipy.interpolate import interp1d
 from scipy.optimize import minimize, Bounds
 
+from turborocket.solvers.solver import adjoint
+
 
 class SupersonicProfile:
+    """Object Used to Define Supersonic Profiles"""
+
+    # Constant for converting angles to radians
+    ANGLE_CONVERSION = np.pi / 180
 
     def __init__(
         self,
-        beta_i: float,
-        beta_o: float,
-        M_i: float,
-        M_o: float,
-        M_u: float,
-        M_l: float,
-        m_dot: float,
-        h: float,
+        beta: tuple[float, float],
+        M_r: tuple[float, float],
+        M_s: tuple[float, float],
         fluid: IdealGas,
+        t_g_rat: float = 0,
+        g_expand: float = 0,
+        k_max: int = 100,
     ) -> None:
+        """Constructor for Supersonic Profiles.
 
-        # Constant for converting angles to radians
-        ANGLE_CONVERSION = np.pi / 180
+        It should be noted that for the specification of the relative velocity angles at inlet and outlet:
 
-        self._beta_i = beta_i * ANGLE_CONVERSION
-        self._beta_o = beta_o * ANGLE_CONVERSION
-        self._M_i = M_i
-        self._M_o = M_o
-        self._M_u = M_u
-        self._M_l = M_l
-        self._m_dot = m_dot
-        self._h = h
+        - A clockwise direction relative to the axial direction is positive.
+        - A counter clockwise direction relative to the axial direction is negative.
+
+        As such, with most conventional blade profiles that are of "impulse design", the inlet angle tends to be negative, with the outlet relative blade angle as postiive.
+
+        Args:
+            beta (tuple[float,float]): Inlet and Outlet Bulk Velocity Angles with reference to the axial direction [ deg, deg ]
+            M_r (tuple[float, float]): Relative Inlet Mach Numbers at the Inlet and Outlet ( M_i, M_o ) [ N.D., N.D. ]
+            M_s (tuple[float, float]): Peak Mach Numbers on the Upper and Lower **Passage Surfaces** of the Turbine ( M_u, M_l ) [ N.D., N.D.]
+            fluid (IdealGas): Object representing the fluid flowing through the turbine profile.
+            deflection (float): Deflection Angle of Entire assembly, clockwise [ rad ]
+            t_g_rat (float, optionatl): Blade Pitch Wise LE/TE thickness to blade spacing ratio [ N.D. ]. Defaults to zero.
+            g_expand (float, optional): Blade Pitch Expansion Factor, used to expand blade spacing to account for Boundary Layers [ N.D. ]. Defaults to 0.
+            k_max (int, optional): Number of Points to discretise our curves for.
+            m_dot (float, optional): Mass Flow Rate Through Turbine [ kg/s ]. Defaults to 1.
+            h (float, optional): Blade Turbine Height [ m ]. Defaults to 1.
+        """
+
+        # First think we do is unpack our arrays
+        self._M_i, self._M_o = M_r
+        self._M_u, self._M_l = M_s
+        beta_i, beta_o = beta
+
+        # We then do some simple validation to confirm the mach numbers provided are reasonable.
+        if (self._M_u > self._M_i) or (self._M_u > self._M_o):
+            raise ValueError(
+                f"Mach Number on Upper Surface Cannot be Greater than Inlet or Outlet! {self._M_u} > {self._M_i}, {self._M_o}"
+            )
+
+        elif (self._M_l < self._M_i) or (self._M_l < self._M_o):
+            raise ValueError(
+                f"Mach Number on Lower Surface Cannot be Less than Inlet or Outlet! {self._M_l} < {self._M_i}, {self._M_o}"
+            )
+
+        # We can now solve for our critical velocity ratios.
+        self._M_u_star = self.critical_velocity_ratio(m=self._M_u, gas=fluid)
+        self._M_l_star = self.critical_velocity_ratio(m=self._M_l, gas=fluid)
+        self._M_i_star = self.critical_velocity_ratio(m=self._M_i, gas=fluid)
+        self._M_o_star = self.critical_velocity_ratio(m=self._M_o, gas=fluid)
+
+        # We can now go on to solve for our Prandtl Meyer Angles in absolute frame
+        self._v_u = self.prantdl_meyer(m_star=self._M_u, gas=fluid)
+        self._v_l = self.prantdl_meyer(m_star=self._M_l, gas=fluid)
+        self._v_i = self.prantdl_meyer(m_star=self._M_i, gas=fluid)
+        self._v_o = self.prantdl_meyer(m_star=self._M_o, gas=fluid)
+
+        # We evaluate for our deflected inlet angle, based on the area ratio
+        a_rat = oblique_shock_area_rat(
+            M_star_e=self._M_i_star, M_star_i=self._M_i_star, gamma=fluid.gamma
+        )
+        beta_e = get_beta_e(
+            t_g_rat=t_g_rat, beta_i=-beta_i * self.ANGLE_CONVERSION, a_rat=a_rat
+        )
+
+        beta_i = -beta_e / self.ANGLE_CONVERSION
+
+        # We can evaluate for our beta angle and associated deflection
+        self._deflection = abs(beta_i + beta_o) * self.ANGLE_CONVERSION
+
+        if abs(beta_i) < abs(beta_o):
+            self._beta_i = -beta_o * self.ANGLE_CONVERSION + self._deflection
+            self._clock_flag = True
+        else:
+            self._beta_i = beta_i * self.ANGLE_CONVERSION + self._deflection
+            self._clock_flag = False
+
+        # We can now sort for our angles
+
+        self._beta_o = self.exit_blade_angle(
+            beta_i=self._beta_i, M_i=self._M_i, M_o=self._M_o, gas=fluid
+        )
+
+        # Finally, we can evaluate for our circular mach numbers
+        self._alpha_l_i = self.vortex_angle(
+            beta_m=self._beta_i, v_i=self._v_i, v_f=self._v_l, surface=True
+        )
+        self._alpha_l_o = self.vortex_angle(
+            beta_m=self._beta_o, v_i=self._v_l, v_f=self._v_o, surface=True
+        )
+        self._alpha_u_i = self.vortex_angle(
+            beta_m=self._beta_i, v_i=self._v_i, v_f=self._v_u, surface=False
+        )
+        self._alpha_u_o = self.vortex_angle(
+            beta_m=self._beta_o, v_i=self._v_u, v_f=self._v_o, surface=False
+        )
+
+        # We can now evaluate for our vortex flow radii
+        self._R_l_star = self.vortex_radius(M_star=self._M_l)
+        self._R_u_star = self.vortex_radius(M_star=self._M_u)
+
+        # We can now generate our transition curves for inlet
+        self._l_i_coord = self.transition_zone(
+            v_i=self._v_i,
+            v_f=self._v_l,
+            k_max=k_max,
+            fluid=fluid,
+            alpha=self._alpha_l_i,
+            reverse_x=True,
+        )
+
+        self._u_i_coord = self.transition_zone(
+            v_i=self._v_i,
+            v_f=self._v_u,
+            k_max=k_max,
+            fluid=fluid,
+            alpha=-self._alpha_u_i,
+            reverse_x=False,
+        )
+
+        # We deflect our inlet curves
+        arrays = [
+            self._l_i_coord,
+            self._u_i_coord,
+        ]
+
+        c = np.cos(self._deflection)
+        s = np.sin(self._deflection)
+
+        for arr in arrays:
+            x = arr[:, 0].copy()
+            y = arr[:, 1].copy()
+
+            arr[:, 0] = c * x - s * y
+            arr[:, 1] = s * x + c * y
+
+        # We can now solve for our straight zones:
+        self._straight_i_coord = self.straight_zone(
+            beta_m=-(self._beta_i - self._deflection),
+            initial_coord=(self._l_i_coord[-1]),
+            x_f=self._u_i_coord[-1, 0],
+        )
+        # We now get our blade spacing at inlet
+        self._g_star = -(self._straight_i_coord[-1] - self._u_i_coord[-1])[1]
+
+        # We can then run a study to optimsie for expansion angle to meet even spacing
+        d_alpha = adjoint(
+            func=self.blade_spacing_TE,
+            x_guess=0.00,
+            dx=0.02,
+            n=10000,
+            relax=0.5,
+            target=self._g_star,
+            params=[
+                (self._alpha_u_o, self._alpha_l_o),
+                self._v_o,
+                self._beta_o,
+                self._deflection,
+                (self._v_u, self._v_l),
+                k_max,
+                fluid,
+            ],
+        )
+
+        alpha_l = self._alpha_l_o - d_alpha
+        alpha_u = self._alpha_u_o + d_alpha
+
+        # We then get our outlet transitions
+        self._l_o_coord = self.transition_zone(
+            v_i=self._v_o + d_alpha,
+            v_f=self._v_l,
+            k_max=k_max,
+            fluid=fluid,
+            alpha=-alpha_l,
+            reverse_x=False,
+        )
+
+        self._u_o_coord = self.transition_zone(
+            v_i=self._v_o - 2 * d_alpha,
+            v_f=self._v_u,
+            k_max=k_max,
+            fluid=fluid,
+            alpha=alpha_u,
+            reverse_x=True,
+        )
+
+        # We now need to solve for our circular section
+        self._vortex_l_coord = self.vortex_zone(
+            alpha=(self._alpha_l_i, self._alpha_l_o - d_alpha),
+            r_star=self._R_l_star,
+            k_max=k_max,
+        )
+        self._vortex_u_coord = self.vortex_zone(
+            alpha=(self._alpha_u_i, self._alpha_u_o + d_alpha),
+            r_star=self._R_u_star,
+            k_max=k_max,
+        )
+
+        # We can finally now rotate our entire assembly according to the deflection angle.
+        # We define our rotation matrix
+
+        arrays = [
+            self._l_o_coord,
+            self._u_o_coord,
+            self._vortex_l_coord,
+            self._vortex_u_coord,
+        ]
+
+        c = np.cos(self._deflection)
+        s = np.sin(self._deflection)
+
+        for arr in arrays:
+            x = arr[:, 0].copy()
+            y = arr[:, 1].copy()
+
+            arr[:, 0] = c * x - s * y
+            arr[:, 1] = s * x + c * y
+
+        # We then re-solve for our leading and trailing edges, considering the new rotation
+
+        self._straight_o_coord = self.straight_zone(
+            beta_m=-self._beta_o + self._deflection + 2 * d_alpha,
+            initial_coord=(self._l_o_coord[-1]),
+            x_f=self._u_o_coord[-1, 0],
+        )
+
+        # We also need to re-evaluate for our blade spacing, which we can do using our basic equation
+
+        # We can solve for the leading edge and trailing edge thickness
+        if t_g_rat != 0:
+
+            # We get the blade ratio
+            if self._clock_flag:
+                g_rat = self.blade_passage_ratio(
+                    beta_d=self._beta_i,
+                    beta_i=(self._beta_i - self._deflection),
+                    t_g_rat=t_g_rat,
+                )
+
+                # We can evaluate for the new blade spacing
+                self._g_star_2 = self._g_star * (1 / g_rat)
+
+                # We can now evaluate for the blade leading edge thicknes
+                t_g_rat_2 = self.blade_thickness_ratio(
+                    g_star_rat=g_rat,
+                    beta_d=self._beta_i,
+                    beta_i=(self._beta_i - self._deflection),
+                )
+
+            else:
+                self._g_star_2 = self._g_star
+                t_g_rat_2 = t_g_rat
+
+            self._t = t_g_rat_2 * self._g_star
+
+            # We can define our pitch
+            self._p = self._g_star_2 * (1 + t_g_rat)
+
+            # We can now solve for our leading and traling edge angles
+            le_radius = self.edge_radius(
+                beta_m=(self._beta_i - self._deflection), t=self._t
+            )
+
+            te_radius = self.edge_radius(
+                beta_m=(-self._beta_o + self._deflection + 2 * d_alpha), t=self._t
+            )
+
+            # We can now evaluate for the LE/TE circles
+            self._LE_coord = self.vortex_zone(
+                alpha=(
+                    (self._beta_i - self._deflection) - np.pi,
+                    (self._beta_i - self._deflection),
+                ),
+                r_star=le_radius,
+                k_max=k_max,
+            )
+
+            self._TE_coord = self.vortex_zone(
+                alpha=(
+                    -(-self._beta_o + self._deflection + 2 * d_alpha) + np.pi,
+                    -(-self._beta_o + self._deflection + 2 * d_alpha),
+                ),
+                r_star=te_radius,
+                k_max=k_max,
+            )
+
+            # We then get our edge centroid location
+            self._LE_center = self.edge_centroid(
+                edge_coord=tuple(self._straight_i_coord[-1]),
+                beta_m=(self._beta_i - self._deflection),
+                r=le_radius,
+            )
+            self._TE_center = self.edge_centroid(
+                edge_coord=tuple(self._straight_o_coord[-1]),
+                beta_m=-(-self._beta_o + self._deflection + 2 * d_alpha),
+                r=te_radius,
+            )
+
+            # We then offset our co-ordinates accordingly to the center
+            self._LE_coord += np.array(
+                [self._LE_center[0], self._LE_center[1] + self._g_star]
+            )
+            self._TE_coord += np.array(
+                [self._TE_center[0], self._TE_center[1] + self._g_star]
+            )
+
+            # Finally, we adjust our LE/TE Inlet Lines
+            self._straight_o_coord = self.straight_zone(
+                beta_m=-self._beta_o + self._deflection + 2 * d_alpha,
+                initial_coord=(self._l_o_coord[-1]),
+                x_f=self._TE_coord[-1, 0],
+            )
+
+            self._straight_i_coord = self.straight_zone(
+                beta_m=-(self._beta_i - self._deflection),
+                initial_coord=(self._l_i_coord[-1]),
+                x_f=self._LE_coord[-1, 0],
+            )
+
+        if self._clock_flag:
+            arrays = [
+                self._l_i_coord,
+                self._l_o_coord,
+                self._u_i_coord,
+                self._u_o_coord,
+                self._vortex_l_coord,
+                self._vortex_u_coord,
+                self._straight_i_coord,
+                self._straight_o_coord,
+                self._LE_coord,
+                self._TE_coord,
+            ]
+
+            c = np.cos(-self._deflection)
+            s = np.sin(-self._deflection)
+
+            for arr in arrays:
+                x = arr[:, 0].copy()
+                y = arr[:, 1].copy()
+
+                arr[:, 0] = c * x - s * y
+                arr[:, 1] = s * x + c * y
+
+        # We can now get the chord length
+
+        self._c = self._TE_coord[:, 0].max() - self._LE_coord[:, 0].min()
+
+        # We can apply our expansion facotr
+        self._p *= 1 + g_expand
+
+        # We can now solve for our blade_spacing to chord ratio
+        self._sigma = self._p / self._c
+
+        self.check_constraints(
+            m_r_star=(self._M_i_star, self._M_o_star),
+            m_s_star=(self._M_u_star, self._M_l_star),
+            fluid=fluid,
+        )
+
         self._fluid = fluid
 
-    def prantl_meyer(self):
-        # The first process required for the design of the supersonic blade profile is the definition of the upper and lower circular arcs.
+        # self.generate_turbine_profile()
 
-        # We must firstly compute the Prantl Meyer Angle of the Upper and Lower surfaces based on the predefined mach-numbers.
+    def critical_velocity_ratio(self, m: float, gas: IdealGas) -> float:
+        """Function that solves for the critical velocity ratio, based on the flowing gas and Mach Number
 
-        # Calculating our critical velocity ratios
+        Args:
+            m (float): Desired Mach Number to be converted [ N.D. ]
+            gas (IdealGas): Gas Flowing at the Desired Mach Number.
 
-        GAMMA = self._fluid.get_gamma()
+        Returns:
+            float: Critical Velocity Ratio (M*) at the selected mach number [ N.D. ]
+        """
+        # We firstly need to extract our gamma parameter
+        gamma = gas.gamma
 
-        self._M_u_star = M_star(GAMMA, self._M_u)
+        # We can now directly call for our utility function
+        crit_vel = M_star(gamma=gamma, M=m)
 
-        self._M_l_star = M_star(GAMMA, self._M_l)
+        return crit_vel
 
-        self._M_i_star = M_star(GAMMA, self._M_i)
+    def prantdl_meyer(self, m_star: float, gas: IdealGas) -> float:
+        """Function that solves for the Prandtl Meyer Angle, based on the flowing gas and the critical velocity ratio provided by the user.
 
-        self._M_o_star = M_star(GAMMA, self._M_o)
+        Args:
+            m_star (float): Desired Critical Velocity Ratio to be converted [ N.D. ]
+            gas (IdealGas): Gas Flowing at the Desired Critical Velocity Ratio.
 
-        # Calculating our Prantl Meyer values
+        Returns:
+            float: Prandtl Meyer Angle at the desired critical velocity ratio [ rad ]
+        """
+        # We firstly extract our gas propertiees
+        gamma = gas.gamma
 
-        self._v_u = prandtl_meyer(GAMMA, self._M_u_star)
+        # We can now use our utility function to evaluate for the prandtl Meyer Angle
+        v = prandtl_meyer(gamma=gamma, crit_vel_rat=m_star)
 
-        self._v_l = prandtl_meyer(GAMMA, self._M_l_star)
+        return v
 
-        self._v_i = prandtl_meyer(GAMMA, self._M_i_star)
+    def exit_blade_angle(
+        self, beta_i: float, M_i: float, M_o: float, gas: IdealGas
+    ) -> float:
+        """Function that solves for the exit blade angle, as a function of inlet and outlet Mach Numbers, along with gas properties.
 
-        self._v_o = prandtl_meyer(GAMMA, self._M_o_star)
+        Args:
+            beta_i (float): _description_
+            M_i (float): Inlet Bulk Flow Mach Number [ N.D ]
+            M_o (float): Outlet Bulk Flow Mach Number [ N.D. ]
+            gas (IdealGas): Gas Flowing though the passage.
 
-    def circular_section(self):
+        Returns:
+            float: Exit Blade Metal Angle [ rad ]
+        """
+        # We simply directly use our utility equation.
+        b_o_m = beta_o(beta_i=beta_i, M_i=M_i, M_o=M_o, gamma=gas.gamma)
 
-        # Calculating our circular arc angles
+        return b_o_m
 
-        [self._alpha_u_i, self._alpha_u_o] = arc_angles_upper(
-            beta_o=self._beta_o,
-            beta_i=self._beta_i,
-            v_i=self._v_i,
-            v_o=self._v_o,
-            v_u=self._v_u,
+    def vortex_angle(
+        self, beta_m: float, v_i: float, v_f: float, surface: bool
+    ) -> float:
+        """Function that evaluates for the suction sufrace vortex flow angles
+
+        Args:
+            beta_m (float): Blade Metal Angle
+            v_i (float): Initial Prandtl Meyer Angle [ rad ]
+            v_f (float): Final Prandtl Meyer Angle [ rad ]
+            surface (bool): Surface Flag for Suction or Pressure Surface. Suction Surface is True
+
+        Returns:
+            float: Desired Vortex Angle [ rad ]
+        """
+        # We can directly evaluate for the angle
+        angle = vortex_flow_angles(beta_m=beta_m, v_i=v_i, v_f=v_f, surface=surface)
+
+        return angle
+
+    def vortex_radius(self, M_star: float) -> float:
+        """Function that Evaluates for the Fortex Flow Radius
+
+        Args:
+            M_star (float): Critical Velocity Ratio to which to evaluate the Vortex flow radius [ N.D. ]
+
+        Returns:
+            float: Normalised Vortex Flow Radius R* [ m ]
+        """
+
+        r_star = 1 / M_star
+
+        return r_star
+
+    def transition_zone(
+        self,
+        v_i: float,
+        v_f: float,
+        k_max: int,
+        fluid: IdealGas,
+        alpha: float = 0,
+        reverse_x: bool = False,
+    ) -> np.ndarray[np.float64]:
+        """Function that returns a transition arc between an initial and final prandtl Meyer Angle.
+
+        Args:
+            v_i (float): Initial Prandtl Meyer Angle for the Transition [ rad ]
+            v_f (float): Final Prandtl Meyer Angle for the Transition [ rad ]
+            k_max (int): Number of Points to Consider for the Transition [ N.D. ]
+            fluid (IdealGas): Gas Flowing Throught Turbine Stage.
+            alpha (float, optional): Rotation Angle to Displace Transform Transition Arct [ rad ]. Defaults to 0 rad.
+            reverse_x (bool): Flag used for reversing the Final X co-ordinates. Defaults to False.
+
+        Returns:
+            np.ndarray[np.float64]: Array of co-ordinate points that can be used for plotting.
+        """
+
+        # We use our utility function to generate our MoC transition points
+        x_pnt, y_pnt = method_of_characteristics(
+            k_max=k_max,
+            v_i=v_i,
+            v_l=v_f,
+            gamma=fluid.gamma,
+            alpha_l_i=alpha,
+            reverse_x=reverse_x,
         )
 
-        [self._alpha_l_i, self._alpha_l_o] = arc_angles_lower(
-            beta_o=self._beta_o,
-            beta_i=self._beta_i,
-            v_i=self._v_i,
-            v_o=self._v_o,
-            v_l=self._v_l,
+        # We then combine them together to make a singular array
+        coords = np.column_stack((x_pnt, y_pnt))
+
+        return coords
+
+    def vortex_zone(
+        self, alpha: tuple[float, float], r_star: float, k_max: int
+    ) -> np.ndarray[np.float64]:
+        """Function that evaluates for the co-ordinates for the vortex "circular" arc zones of the turbine.
+
+        Args:
+            alpha (tuple[float, float]): Tuple containing the starting and ending arc locations (alpha_i, alpha_f) [ rad, rad ]
+            R_star (float): Normalised Radius of the Vortex Zone [ N.D. ]
+            k_max (float): Number of Points to discretise Curve.
+
+        Returns:
+            np.ndarray[np.float64]: Co-ordinate array of all points in the Vortex zone.
+        """
+        # First think we do is extract our alpha angles
+        alpha_i, alpha_f = alpha
+
+        # We then generate a linspace array based on the number of points to consider
+        alpha_array = np.linspace(alpha_i, alpha_f, k_max)
+
+        # We then generate our x and y co-ordinates using standard triginometry
+        x_array = r_star * np.sin(alpha_array)
+        y_array = r_star * np.cos(alpha_array)
+
+        # We then combined these to make our co-ordinates
+        coords = np.column_stack((x_array, y_array))
+
+        return coords
+
+    def straight_zone(
+        self, beta_m: float, initial_coord: tuple[float, float], x_f: float
+    ) -> np.ndarray[np.float64]:
+        """Function that evaluates for the straight inlet/outlet sections of the turbine, based on the inlet/outlet angle and co-ord positions
+
+        Args:
+            beta_m (float): Blade Metal Angle
+            initial_coord (tuple[float, float]): Initial Point for the Staight Section ( x, y ) [ N.D., N.D. ]
+            x_f (float): Final x-co-ordiante of the straight section [ N.D. ]
+
+        Returns:
+            np.ndarray[np.float64]: Array containing the co-ordinates of the straight line segments (x, y)
+        """
+        # We firstly unpack our initial co-ordiante location
+        x_o, y_o = initial_coord
+
+        # We then convert the beta angle into a gradient
+        m = np.tan(beta_m)
+
+        # We can then solve for the offset (y_o) to fit a line to that point and gradient
+        c = y_o - m * x_o
+
+        # We can now solve for our new point
+        y_f = x_f * m + c
+
+        # We can package this into an array and deliver it to the user
+        return np.array([[x_o, y_o], [x_f, y_f]])
+
+    def blade_spacing_TE(
+        self,
+        d_alpha: float,
+        alpha: tuple[float, float],
+        v_o: float,
+        beta_o: float,
+        deflection: float,
+        v_s: tuple[float, float],
+        k_max: int,
+        fluid: IdealGas,
+    ) -> float:
+        """Function that evaluates for the trailiing edge blad spacing.
+
+        Args:
+            d_alpha (float): Circular Arc Offset [ rad ]
+            alpha (tuple[float, float]): Tuple of the initial arc angles of the upper and lower
+            v_o (float): Outlet Prantdl Meyer Angle [ rad ]
+            beta_o (float): Outlet Blade Anlge [ rad ]
+            deflection (float): Deflection Angle [ rad ]
+            v_s (tuple[float, float]): Tuple of the Upper Surface and Lower Surface Prandtl Number of Vortex sections [ rad, rad ]
+            k_max (int): Number of points to discretise in transition zones
+            fluid (IdealGas): Ideal Gas Fluid Object
+
+        Returns:
+            float: Blade Spacing at the Trailing Edge of the component
+        """
+        # We firslty unpack our arrays
+        v_u, v_l = v_s
+        alpha_u, alpha_l = alpha
+
+        # We then adjust our blade spacing
+        alpha_u += d_alpha
+        alpha_l -= d_alpha
+
+        # We can now evaluate for our transition zones
+        lower = self.transition_zone(
+            v_i=v_o + d_alpha,
+            v_f=v_l,
+            k_max=k_max,
+            fluid=fluid,
+            alpha=-alpha_l,
+            reverse_x=False,
+        )
+        upper = self.transition_zone(
+            v_i=v_o - 2 * d_alpha,
+            v_f=v_u,
+            k_max=k_max,
+            fluid=fluid,
+            alpha=alpha_u,
+            reverse_x=True,
         )
 
-        # We can calculate the non-dimentional radii of the upper and lower
-        # circles of the vortex sections of the plot
+        # We need to transform these transition zones accordingly.
+        arrays = [upper, lower]
+        c = np.cos(self._deflection)
+        s = np.sin(self._deflection)
 
-        self._R_l_star = 1 / self._M_l_star
+        for arr in arrays:
+            x = arr[:, 0].copy()
+            y = arr[:, 1].copy()
 
-        self._R_u_star = 1 / self._M_u_star
+            arr[:, 0] = c * x - s * y
+            arr[:, 1] = s * x + c * y
 
-        return
-
-    def r_star(self):
-
-        # We specify the number of steps for our integration
-
-        INTEGRAL_NUMBER = 100  # TODO: Fix this magic number
-        GAMMA = self._fluid.get_gamma()
-
-        self._wf_parameter = inv_mass_flow(
-            M_star_l=self._M_l_star,
-            M_star_u=self._M_u_star,
-            gamma=GAMMA,
-            n=INTEGRAL_NUMBER,
-            mass_flow=self._m_dot,
+        # We additionally evaluate for our straight sections
+        straight = self.straight_zone(
+            beta_m=-beta_o + deflection + 2 * d_alpha,
+            initial_coord=(lower[-1]),
+            x_f=upper[-1, 0],
         )
 
-        # We meed to now calculate the total density assuming ideal gas
-        density_i_total = self._fluid.get_density()
+        # We then evaluate for blade spacing
+        g = -(straight[-1] - upper[-1])
 
-        # Calculating thet local speed of sound of the ideal gas.
-        a_i_total = self._fluid.speed_of_sound()
+        return g[1]
 
-        # Based on the weight-flow parameter, we can compute the sonic radius
-        self._r_star_a = r_star(
-            wf_parameter=self._wf_parameter,
-            h=self._h,
-            a_total_inlet=a_i_total,
-            rho_total_inlet=density_i_total,
-        )
+    def blade_passage_ratio(
+        self, beta_d: float, beta_i: float, t_g_rat: float
+    ) -> float:
+        """Function that evaluates for the blade passage ratio between the design and developed condition (G_2 / G_1)
 
-        return
+        Args:
+            beta_d (float): Desired Inlet Blade Angle [ rad ]
+            beta_i (float): Designed Inlet Blade Angle [ rad ]
+            t_g_rat (float): Blade Thickness to Spacing Ratio
 
-    def inlet_lower_transition(self):
+        Returns:
+            float: Blade Passage Ratio (G_2 / G_1)
+        """
+        # We define our inelt and exit angles
+        beta_d = abs(beta_d)
+        beta_i = abs(beta_i)
 
-        # We specify an arbritrary number of points for the MoC
-        K_MAX = 10
+        # We can now evaluate for thickness
+        g_rat = t_g_rat * (1 - (np.cos(beta_d) / np.cos(beta_i))) + 1
 
-        # We specify an arbritary inlet absolute angle of zero
-        ALPHA_I = 0
+        return g_rat
 
-        GAMMA = self._fluid.get_gamma()
+    def blade_thickness_ratio(
+        self, g_star_rat: float, beta_d: float, beta_i: float
+    ) -> float:
+        """This function evaluates for the edge displacement as a function of the g_star ratio, design blade angle and inlet angle.
 
-        [self._xlkt_il, self._ylkt_il] = moc(
-            k_max=K_MAX,
-            v_i=self._v_i,
-            v_l=self._v_l,
-            gamma=GAMMA,
-            alpha_l_i=self._alpha_l_i,
-        )
+        Args:
+            g_star_rat (float): Ratio between the passage area developed vs design (G_2 / G_1) [ N.D. ]
+            beta_d (float): Design Blade Inlet Angle [ rad ]
+            beta_i (float): Developed Blade Inlet Angle with Offset [ rad ]
 
-        return
+        Returns:
+            float: Blade Thickness Ratio (t_g_rat_2) [ N.D. ]
+        """
+        # We define our inelt and exit angles
+        beta_d = abs(beta_d)
+        beta_i = abs(beta_i)
 
-    def outlet_lower_transition(self):
+        # We just directly evaluate for it
+        t_g_rat_2 = ((1 / g_star_rat) - 1) / (1 - (np.cos(beta_i) / np.cos(beta_d)))
 
-        # We specify an arbritrary number of points for the MoC
-        K_MAX = 10
+        return t_g_rat_2
 
-        # We specify an arbritary inlet absolute angle of zero
+    def edge_radius(self, beta_m: float, t: float) -> float:
+        """Function that Evaluates for the required LE/TE radius, based on a leading edge pitch displacement thickness and blade metal angle.
 
-        GAMMA = self._fluid.get_gamma()
+        Args:
+            beta_m (float): Blade Metal Angle at Leading Edge/ Trailing Edge [ rad ]
+            t (float): Leading Edge/Trailing Edge thickness [ N.D. ]
 
-        [self._xlkt_ol, self._ylkt_ol] = moc_2(
-            k_max=K_MAX,
-            v_i=self._v_o,
-            v_l=self._v_l,
-            gamma=GAMMA,
-            alpha_l_i=self._alpha_l_o,
-        )  # self._alpha_l_o)
+        Returns:
+            float: Radius of the Leading Edge / Trailing Edge [ N.D. ]
+        """
+        # We make an absolute displacement.
+        beta_m = abs(beta_m)
 
-        return
+        # We can directly solve for the leading edge and trailing edge
+        r = (t * np.cos(beta_m)) / 2
 
-    def inlet_upper_transition(self):
+        return r
 
-        # We specify an arbritrary number of points for the MoC
-        K_MAX = 100
+    def edge_centroid(
+        self, edge_coord: tuple[float, float], beta_m: float, r: float
+    ) -> tuple[float, float]:
+        """Function that evaluates for the centroid location for leading and trailing edges
 
-        # We specify an arbritary inlet absolute angle of zero
+        Args:
+            edge_coord (tuple[float, float]): Co-ordiantes of the selected edge [ N.D., N.D. ]
+            beta_m (float): Blade Metal Angle [ rad ]
+            r (float): Leading/Trailing Edge Radius [ N.D. ]
 
-        GAMMA = self._fluid.get_gamma()
+        Returns:
+            tuple[float,float]: Tuple of the leading/trailing edge centroid co-ordinates
+        """
+        # We firstly un-pack our edge co-ordinates
+        x, y = edge_coord
 
-        [self._xlkt_iu, self._ylkt_iu] = moc_2(
-            k_max=K_MAX,
-            v_i=self._v_i,
-            v_l=self._v_u,
-            gamma=GAMMA,
-            alpha_l_i=self._alpha_u_i,
-        )
+        # We then evaluate for the offsets
+        dx = r * np.sin(beta_m)
+        dy = r * np.cos(beta_m)
 
-        return
+        # We then shift our co-ordiantes and return it back to the user
+        edge_center = (x + dx, y + dy)
 
-    def outlet_upper_transition(self):
+        return edge_center
 
-        # We specify an arbritrary number of points for the MoC
-        K_MAX = 10
+    def plot_passage(self):
+        # This function plots the circular arcs for visual inspection
 
-        # We specify an arbritary inlet absolute angle of zero
+        fig, ax = plt.subplots()
 
-        GAMMA = self._fluid.get_gamma()
-
-        [self._xlkt_ou, self._ylkt_ou] = moc(
-            k_max=K_MAX,
-            v_i=self._v_o,
-            v_l=self._v_u,
-            gamma=GAMMA,
-            alpha_l_i=self._alpha_u_o,
-        )  # self._alpha_u_o)
-
-        return
-
-    def generate_transitions(self):
-        """This function generates all the transition points for the turbine"""
-
-        # We do the inlet transition arcs
-        self.inlet_lower_transition()
-        self.inlet_upper_transition()
-
-        # We now need to compare our conditions for the inlet and lower, and decide if we need to do to re-do the MoC
-        if (self._v_o != self._v_i) and (self._alpha_u_o != self._alpha_u_i):
-            # We generate the outlet transition
-            self.outlet_upper_transition()
+        if self._clock_flag:
+            angle = self._deflection
         else:
-            # Same as the first one, so we can invert our inital co-ordinates.
-            self._xlkt_ou = -self._xlkt_iu
-            self._ylkt_ou = self._ylkt_iu
+            angle = 0
 
-        if (self._v_o != self._v_i) and (self._alpha_l_o != self._alpha_l_i):
-            # We generate the outlet transition
-            self.outlet_lower_transition()
+        dl = self._g_star + self._t
+        # We then plot our results
+
+        ax.plot(
+            self._vortex_l_coord[:, 0] + dl * np.sin(angle),
+            self._vortex_l_coord[:, 1] + dl * np.cos(angle) - self._p,
+            label="Lower Circular Arc",
+        )
+        ax.plot(
+            self._vortex_u_coord[:, 0],
+            self._vortex_u_coord[:, 1],
+            label="Upper Circular Arc",
+        )
+        ax.plot(
+            self._l_i_coord[:, 0] + dl * np.sin(angle),
+            self._l_i_coord[:, 1] + dl * np.cos(angle) - self._p,
+            label="Inlet Lower",
+        )
+        ax.plot(self._u_i_coord[:, 0], self._u_i_coord[:, 1], label="Inlet Upper")
+        ax.plot(
+            self._l_o_coord[:, 0] + dl * np.sin(angle),
+            self._l_o_coord[:, 1] + dl * np.cos(angle) - self._p,
+            label="Outlet Lower",
+        )
+        ax.plot(self._u_o_coord[:, 0], self._u_o_coord[:, 1], label="Outlet Upper")
+        ax.plot(
+            self._straight_i_coord[:, 0] + dl * np.sin(angle),
+            self._straight_i_coord[:, 1] + dl * np.cos(angle) - self._p,
+            label="Inlet Line",
+        )
+        ax.plot(
+            self._straight_o_coord[:, 0] + dl * np.sin(angle),
+            self._straight_o_coord[:, 1] + dl * np.cos(angle) - self._p,
+            label="Outlet Line",
+        )
+
+        ax.plot(
+            self._LE_coord[:, 0],
+            self._LE_coord[:, 1],
+            label="LE",
+        )
+        ax.plot(
+            self._TE_coord[:, 0],
+            self._TE_coord[:, 1],
+            label="TE",
+        )
+
+        ax.set_ylabel(r"y* ($\frac{y}{r^*}$)")
+        ax.set_xlabel(r"x* ($\frac{x}{r^*}$)")
+
+        ax.set_aspect("equal")
+        ax.set_title(f"Normalised Flow Passage Profile")
+
+        ax.legend()
+        plt.show()
+
+        return
+
+    def plot_blade(self):
+        # This function plots the circular arcs for visual inspection
+
+        fig, ax = plt.subplots()
+
+        if self._clock_flag:
+            angle = self._deflection
         else:
-            # Same as the first one, so we can invert our inital co-ordinates.
-            self._xlkt_ol = -self._xlkt_il
-            self._ylkt_ol = self._ylkt_il
+            angle = 0
 
-    def straight_line_segments(self):
-        # The final section for the creation of these aerofoils is to draw in the straight line segments
-        # These are parallel to the flow inlet and outlet and start at the last points of the transition.
-        # The straight line continues until it reaches the equivalent x-coordinate of the lower transition.
+        dl = self._g_star + self._t
 
-        ############### Inlet Straight Line Segment ###############
-        self._x_i_start = self._xlkt_iu[-1]
-        self._y_i_start = self._ylkt_iu[-1]
+        # We then plot our results
 
-        self._x_i_end = self._xlkt_il[-1]
+        ax.plot(
+            self._vortex_l_coord[:, 0] + dl * np.sin(angle),
+            self._vortex_l_coord[:, 1] + dl * np.cos(angle),
+            label="Lower Circular Arc",
+        )
+        ax.plot(
+            self._vortex_u_coord[:, 0],
+            self._vortex_u_coord[:, 1],
+            label="Upper Circular Arc",
+        )
+        ax.plot(
+            self._l_i_coord[:, 0] + dl * np.sin(angle),
+            self._l_i_coord[:, 1] + dl * np.cos(angle),
+            label="Inlet Lower",
+        )
+        ax.plot(self._u_i_coord[:, 0], self._u_i_coord[:, 1], label="Inlet Upper")
+        ax.plot(
+            self._l_o_coord[:, 0] + dl * np.sin(angle),
+            self._l_o_coord[:, 1] + dl * np.cos(angle),
+            label="Outlet Lower",
+        )
+        ax.plot(self._u_o_coord[:, 0], self._u_o_coord[:, 1], label="Outlet Upper")
+        ax.plot(
+            self._straight_i_coord[:, 0] + dl * np.sin(angle),
+            self._straight_i_coord[:, 1] + dl * np.cos(angle),
+            label="Inlet Line",
+        )
+        ax.plot(
+            self._straight_o_coord[:, 0] + dl * np.sin(angle),
+            self._straight_o_coord[:, 1] + dl * np.cos(angle),
+            label="Outlet Line",
+        )
 
-        # We get our required offset
-        delta_y_i = (self._x_i_end - self._x_i_start) * np.tan(self._beta_i)
+        ax.plot(
+            self._LE_coord[:, 0],
+            self._LE_coord[:, 1],
+            label="LE",
+        )
+        ax.plot(
+            self._TE_coord[:, 0],
+            self._TE_coord[:, 1],
+            label="TE",
+        )
 
-        # Hence we can get our last point of the segment
-        self._y_i_end = self._y_i_start + delta_y_i
+        # ax.set_xlim([1.7, 1.9])
+        # ax.set_ylim([0.25, 0.375])
 
-        # We can define our inlet co-ordinate arrays
-        self._x_i_line = np.array([self._x_i_start, self._x_i_end])
-        self._y_i_line = np.array([self._y_i_start, self._y_i_end])
+        ax.set_ylabel(r"y* ($\frac{y}{r^*}$)")
+        ax.set_xlabel(r"x* ($\frac{x}{r^*}$)")
 
-        ############### Outlet Straight Line Segment ###############
-        self._x_o_start = self._xlkt_ou[-1]
-        self._y_o_start = self._ylkt_ou[-1]
+        ax.set_aspect("equal")
+        ax.set_title(f"Normalised Flow Passage Profile")
 
-        self._x_o_end = self._xlkt_ol[-1]
+        # ax.legend()
+        plt.show()
 
-        # We get our required offset
-        delta_y_o = (self._x_o_end - self._x_o_start) * np.tan(self._beta_o)
+        return
 
-        # Hence we can get our last point of the segment
-        self._y_o_end = self._y_o_start + delta_y_o
+    def generate_cfd(
+        self, upwind: float, down_wind: float, sf: float = 1
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Function that generates the boundaries of the domain of the turbine for a CFD Based simulation
 
-        # We can define our inlet co-ordinate arrays
-        self._x_o_line = np.array([self._x_o_start, self._x_o_end])
-        self._y_o_line = np.array([self._y_o_start, self._y_o_end])
+        Args:
+            upwind (float): Upwind Lenght of Turbine Profile [ scaled co-ordinates ]
+            downwind (float): Downwind Length of Turbine Profile [ scaled co-ordinates ]
+            sf (float, optional): Scaling Factor for Co-Ordinates. Defaults to 1.
 
-    def get_g_star(self) -> None:
-        """This function gets the blades spacing for the generated profile"""
+        Returns:
+            tuple[pd.DataFrame, pd.DataFrame]: Tuple of dataframes of the upstream and downstream sections of the turbine.
+        """
+        # We can evaluate fot he leading edge and trailing edge split
+        mid_le = len(self._LE_coord) // 2
+        mid_te = len(self._TE_coord) // 2
 
-        self._g_star = self._ylkt_ol[-1] - self._y_o_end
+
+        # We simply need to create a master x-array and y-array, create a pandas dataframe, then export as csv
+        x_array_l = np.array([])
+        y_array_l = np.array([])
+        z_array_l = np.array([])
+
+        if self._clock_flag:
+            angle = self._deflection
+        else:
+            angle = 0
+
+        dl = self._g_star + self._t
+
+        # Leading Edge
+        x_array_l = np.append(x_array_l, self._LE_coord[mid_le:-1:1, 0])
+        y_array_l = np.append(y_array_l, self._LE_coord[mid_le:-1:1, 1] - self._p)
+
+        # Inlet Line
+        x_array_l = np.append(
+            x_array_l, self._straight_i_coord[::-1, 0] + dl * np.sin(angle)
+        )
+        y_array_l = np.append(
+            y_array_l, self._straight_i_coord[::-1, 1] + dl * np.cos(angle) - self._p
+        )
+
+        # Inlet Transition
+        x_array_l = np.append(
+            x_array_l, self._l_i_coord[-2:1:-1, 0] + dl * np.sin(angle)
+        )
+        y_array_l = np.append(
+            y_array_l, self._l_i_coord[-2:1:-1, 1] + dl * np.cos(angle) - self._p
+        )
+
+        # Lower Vortex
+        x_array_l = np.append(
+            x_array_l, self._vortex_l_coord[1:, 0] + dl * np.sin(angle)
+        )
+        y_array_l = np.append(
+            y_array_l, self._vortex_l_coord[1:, 1] + dl * np.cos(angle) - self._p
+        )
+
+        # Outlet Transition
+        x_array_l = np.append(x_array_l, self._l_o_coord[1:, 0] + dl * np.sin(angle))
+        y_array_l = np.append(
+            y_array_l, self._l_o_coord[1:, 1] + dl * np.cos(angle) - self._p
+        )
+
+        # Outlet Line
+        x_array_l = np.append(
+            x_array_l, self._straight_o_coord[1:, 0] + dl * np.sin(angle)
+        )
+        y_array_l = np.append(
+            y_array_l, self._straight_o_coord[1:, 1] + dl * np.cos(angle) - self._p
+        )
+
+        # Trailing Edge
+        x_array_l = np.append(x_array_l, self._TE_coord[-1:mid_te:-1, 0])
+        y_array_l = np.append(y_array_l, self._TE_coord[-1:mid_te:-1, 1] - self._p)
+
+        ######################
+        # Upper Leading Edge #
+        ######################
+
+        x_array_u = np.array([])
+        y_array_u = np.array([])
+        z_array_u = np.array([])
+
+        # Leading Edge
+        x_array_u = np.append(x_array_u, self._LE_coord[mid_le:1:-1, 0])
+        y_array_u = np.append(y_array_u, self._LE_coord[mid_le:1:-1, 1])
+
+        # Upper Inlet Transition
+        x_array_u = np.append(x_array_u, self._u_i_coord[:1:-1, 0])
+        y_array_u = np.append(y_array_u, self._u_i_coord[:1:-1, 1])
+
+        # Upper Vortex
+        x_array_u = np.append(x_array_u, self._vortex_u_coord[:, 0])
+        y_array_u = np.append(y_array_u, self._vortex_u_coord[:, 1])
+
+        # Upper outlet transition
+        x_array_u = np.append(x_array_u, self._u_o_coord[:, 0])
+        y_array_u = np.append(y_array_u, self._u_o_coord[:, 1])
+
+        # Trailing Edge
+        x_array_u = np.append(x_array_u, self._TE_coord[:mid_te, 0])
+        y_array_u = np.append(y_array_u, self._TE_coord[:mid_te, 1])
+
+        # We then offset our x and y array
+        x_offset = x_array_l.max() - 0.5 * (x_array_l.max() - x_array_l.min())
+        y_offset = y_array_u.max() - 0.5 * (y_array_u.max() - y_array_l.min())
+
+        x_array_l -= x_offset
+        y_array_l -= y_offset
+
+        x_array_u -= x_offset
+        y_array_u -= y_offset
+
+        # We now scale our geometries
+        x_array_l *= sf
+        y_array_l *= sf
+        x_array_u *= sf
+        y_array_u *= sf
+
+        # We then evaluate for our upwind and downwind points, based on our beta angles.
+
+        # We get the co-ordinates of the leading edge points
+        le_point_lower = (x_array_l[0], y_array_l[0])
+        le_point_upper = (x_array_u[0], y_array_u[0])
+
+        te_point_lower = (x_array_l[-1], y_array_l[-1])
+        te_point_upper = (x_array_u[-1], y_array_u[-1])
+
+        le_dy = -upwind * np.tan(self._beta_i)
+        te_dy = down_wind * np.tan(self._beta_o + self._deflection)
+
+        le_upwind_lower = (le_point_lower[0] - upwind, le_point_lower[1] - le_dy)
+        le_upwind_upper = (le_point_upper[0] - upwind, le_point_upper[1] - le_dy)
+
+        te_down_wind_lower = (te_point_lower[0] + down_wind, le_point_lower[1] - te_dy)
+        te_down_wind_upper = (te_point_upper[0] + down_wind, le_point_upper[1] - te_dy)
+
+        # We can now create the data frame
+        df_inlet = pd.DataFrame(
+            data={
+                "x": [le_upwind_lower[0], le_upwind_upper[0]],
+                "y": [le_upwind_lower[1], le_upwind_upper[1]],
+                "z": [0, 0],
+            }
+        )
+        df_outlet = pd.DataFrame(
+            data={
+                "x": [te_down_wind_lower[0], te_down_wind_upper[0]],
+                "y": [te_down_wind_lower[1], te_down_wind_upper[1]],
+                "z": [0, 0],
+            }
+        )
+
+        z_array_l = np.zeros(x_array_l.size)
+        z_array_u = np.zeros(x_array_u.size)
+
+        df_l = pd.DataFrame(data={"x": x_array_l, "y": y_array_l, "z": z_array_l})
+        df_u = pd.DataFrame(data={"x": x_array_u, "y": y_array_u, "z": z_array_u})
+
+        return (df_l, df_u, df_inlet, df_outlet)
+
+    def generate_xy(self, sf: float = 1e3) -> pd.DataFrame:
+        """Function that generates an x-y data frame of the co-ordinates of the turbine, that can be either plotted or used accordingly.
+
+        Returns:
+            pd.DataFrame: Dataframe of Profile Co-ordinates
+        """
+
+        # We simply need to create a master x-array and y-array, create a pandas dataframe, then export as csv
+        x_array = np.array([])
+        y_array = np.array([])
+        z_array = np.array([])
+
+        if self._clock_flag:
+            angle = self._deflection
+        else:
+            angle = 0
+
+        dl = self._g_star + self._t
+
+        # Leading Edge
+        x_array = np.append(x_array, self._LE_coord[:-1, 0])
+        y_array = np.append(y_array, self._LE_coord[:-1, 1])
+
+        # Inlet Line
+        x_array = np.append(
+            x_array, self._straight_i_coord[::-1, 0] + dl * np.sin(angle)
+        )
+        y_array = np.append(
+            y_array, self._straight_i_coord[::-1, 1] + dl * np.cos(angle)
+        )
+
+        # Inlet Transition
+        x_array = np.append(x_array, self._l_i_coord[-2:1:-1, 0] + dl * np.sin(angle))
+        y_array = np.append(y_array, self._l_i_coord[-2:1:-1, 1] + dl * np.cos(angle))
+
+        # Lower Vortex
+        x_array = np.append(x_array, self._vortex_l_coord[1:, 0] + dl * np.sin(angle))
+        y_array = np.append(y_array, self._vortex_l_coord[1:, 1] + dl * np.cos(angle))
+
+        # Outlet Transition
+        x_array = np.append(x_array, self._l_o_coord[1:, 0] + dl * np.sin(angle))
+        y_array = np.append(y_array, self._l_o_coord[1:, 1] + dl * np.cos(angle))
+
+        # Outlet Line
+        x_array = np.append(x_array, self._straight_o_coord[1:, 0] + dl * np.sin(angle))
+        y_array = np.append(y_array, self._straight_o_coord[1:, 1] + dl * np.cos(angle))
+
+        # Trailing Edge
+        x_array = np.append(x_array, self._TE_coord[-2:1:-1, 0])
+        y_array = np.append(y_array, self._TE_coord[-2:1:-1, 1])
+
+        # Upper outlet transition
+        x_array = np.append(x_array, self._u_o_coord[:1:-1, 0])
+        y_array = np.append(y_array, self._u_o_coord[:1:-1, 1])
+
+        # # Upper Vortex
+        x_array = np.append(x_array, self._vortex_u_coord[:1:-1, 0])
+        y_array = np.append(y_array, self._vortex_u_coord[:1:-1, 1])
+
+        # Upper Inlet Transition
+        x_array = np.append(x_array, self._u_i_coord[:, 0])
+        y_array = np.append(y_array, self._u_i_coord[:, 1])
+
+        # We then offset our x and y array
+        x_array -= x_array.max() - 0.5 * (x_array.max() - x_array.min())
+        y_array -= y_array.max() - 0.5 * (y_array.max() - y_array.min())
+
+        # We now scale our geometries
+        x_array *= sf
+        y_array *= sf
+
+        z_array = np.zeros(x_array.size)
+
+        df = pd.DataFrame(data={"x": x_array, "y": y_array, "z": z_array})
+
+        return df
+
+    def check_constraints(
+        self,
+        m_r_star: tuple[float, float],
+        m_s_star: tuple[float, float],
+        fluid: IdealGas,
+    ) -> None:
+        """Function that Checks the constraints of the blade profile generated.
+
+        Args:
+            m_r_star (tuple[float, float]): Tuple containing the critical velocity ratios for the inlet and outlet
+            m_s_star (tuple[float,float]): Tuple containing the critical velocity ratios of the surface
+            fluid (IdealGas): Ideal Gas Fluid Object
+        """
+        # Firstly we unpack our arrays
+        m_i_star, m_o_star = m_r_star
+        m_u_star, m_l_star = m_s_star
+        print(m_u_star)
+
+        # We evaluate for our maximum inlet mach number
+        m_i_s_max = self.get_M_i_star_max(
+            m_l_star=m_l_star, m_u_star=m_u_star, fluid=fluid
+        )
+
+        # We evalaute for max upper surface mach number for flow seperation
+        m_u_s_max = self.get_M_u_star_max(m_o_star=m_o_star, fluid=fluid)
+
+        # We evaluate for the minimum lower surface mach number for flow seperation
+        m_l_s_min = self.get_M_l_star_min(m_i_star=m_i_star, fluid=fluid)
+
+        # We then do error check
+        if m_i_star > m_i_s_max:
+            raise ValueError(
+                f"Blade cannot start as maximum inlet mach number is nominally exceeded. {m_i_star} > {m_i_s_max}"
+            )
+
+        elif m_u_star < m_l_s_min:
+            raise ValueError(
+                f"Maxium upper surface mach number exceeded for flow seperation. {m_u_star} > {m_u_s_max}"
+            )
+
+        elif m_l_star > m_u_s_max:
+            raise ValueError(
+                f"Minimum lower surface mach number exceed for flow seperation. {m_l_star} < {m_l_s_min}"
+            )
+
+        # If no errors, we report margins
+        print(f"#" * 80)
+        print(f"# {"Constraint Report":^76} #")
+        print(f"#" * 80 + "\n")
+
+        print(f"M_i_star: {m_i_star}")
+        print(f"M_i_star_max: {m_i_s_max}\n")
+
+        print(f"M_u_star: {m_u_star}")
+        print(f"M_u_star_min: {m_l_s_min}\n")
+
+        print(f"M_l_star: {m_l_star}")
+        print(f"M_l_star_max: {m_u_s_max}")
+
+    def size_geometry(
+        self, D_m: float, N: int | None = None, b: float | None = None
+    ) -> dict[str, float]:
+        """This function is used for scaling the geometry based on the solidity we use for the blade design.
+
+        Args:
+            D_m (float): Mean Diameter of the Turbine
+            N (int | None): Number of Blades at the meanline Diameter (m). Defaults to None
+            b (float | None): Blade Chord Length (m). Defaults to None
+        """
+
+        if N is not None and b is not None:
+            raise ValueError("Problem is Over defined!")
+
+        elif b is not None:
+            # We calcualte the blade spacing based on the chord length
+            t = b / self._sigma
+
+            N = round(D_m / self._t)
+
+        elif N is not None:
+            # We calculate the chord length based on the
+            pass
+        else:
+            raise ValueError(
+                "Not enough information. Require either the blade chord length or number of profiles at the mean diameter"
+            )
+
+        # We can now solve for the blade pitch based on the number of blades we intend to have
+        p = np.pi * D_m / N
+
+        # From this, we can figure out what the blade chord should be
+
+        b = p / self._sigma
+
+        # We can now solve for our scaling factor
+        sf = b / self._c
+
+        return sf
+
+    def get_M_i_star_max(
+        self, m_l_star: float, m_u_star: float, fluid: IdealGas, k_integral: int = 100
+    ) -> float:
+        """Function that evalutes for the maximum inlet Mach Number for ensuring the blade pasage is starting and will consume the shcok front.
+
+        Args:
+            m_l_star (float): Critical Velocity Ratio on the Lower Surface of the blade passage [ N.D. ]
+            m_u_star (float): Critical Velocity Ratio on the Upper Surface of the blade passage [ N.D. ]
+            fluid (IdealGas): Fluid properties of the gas
+            k_integral (int, optional): Number of Points to use for integration. Defaults to 100.
+
+        Returns:
+            float: Maximum inlet mach number of the blade passage [ N.D. ]
+        """
+        # We firstly extract our specific heat ratio of the fluid
+        gamma = fluid.gamma
+
+        # We can now evalate for our k_star factor
+        k_star = k_star_max(
+            M_star_l=m_l_star,
+            M_star_u=m_u_star,
+            gamma=gamma,
+            n=k_integral,
+        )
+
+        # We can now evaluate for our Q factor and C factor for evaluating our shock pressure ratio
+        Q_blade = Q_factor(
+            M_star_l=m_l_star,
+            M_star_u=m_u_star,
+            gamma=gamma,
+            n=k_integral,
+        )
+
+        C_blade = C_factor(
+            M_star_l=m_l_star,
+            M_star_u=m_u_star,
+            gamma=gamma,
+            n=k_integral,
+            k_star=k_star,
+        )
+
+        # We can now evaluate for the expected shock pressure ratio, and use this to evaluate for the maximum inlet critical velocity ratio.
+        p_rat = shock_pressure_rat(Q=Q_blade, C=C_blade)
+
+        m_i_star_max = M_i_star_max(p_rat=p_rat, gamma=gamma)
+
+        return m_i_star_max
+
+    def get_M_u_star_max(self, m_o_star: float, fluid: IdealGas) -> float:
+        """Function that evalautes for the maximum mach number on the upper surface to avoid flow seperation.
+
+        Args:
+            m_o_star (float): Design Outlet Critical Velocity Ratio [ N.D. ]
+            fluid (IdealGas): Fluid properties of the gas.
+
+        Returns:
+            float: Maximum Upper Surface Mach Number
+        """
+        # We firstly extract our specific heat ratio fot he fluid
+        gamma = fluid.gamma
+
+        # We can get the critical velocity ratio of the upper surface by using our utility function
+        m_u_star_max = M_star_u_max(M_star_o=m_o_star, gamma=gamma)
+
+        return m_u_star_max
+
+    def get_M_l_star_min(self, m_i_star: float, fluid: IdealGas) -> float:
+        """Thjs function evaluates for the minimum mach number at the lower surface of the blade.
+
+        Args:
+            m_i_star (float): Normalised Inlet critical velocity ratio [ N.D. ]
+            fluid (IdealGas): Fluid properties of the gas.
+
+        Returns:
+            float: Minimum Mach Number on the lower surface of the blade [ N.D. ]
+        """
+        # We firstly evaluate for the specific heat ratio of the fluid
+        gamma = fluid.gamma
+
+        # We can then use our utility function to evaluate for the minimum inlet mach number
+        m_l_star_min = M_star_l_min(m_star_i=m_i_star, gamma=gamma)
+
+        return m_l_star_min
+
+    def generate_turbine_profile(self) -> None:
+        """This Function Performs the Geometry generation for the Turbine Blade Profile"""
+        # We firstly solve for our Prandtl Meyer Numebers
+        self.prantl_meyer()
+
+        # We then get our circular section parameters
+        self.circular_section()
+
+        # We solve for the upper maximum and lower minimum mach numbers to prevent flow speeration
+        self.M_u_max()
+        self.M_l_min()
+        print(f"Bing")
+
+        # We solve for the maximum inlet mach number (at turbine inlet) before the turbine would unstarts
+        self.M_i_max()
+
+        # We solve for the key geometries of the turbine
+        self.generate_transitions()
+
+        # We discretise the circulate sections
+        self.discretise_circular(50)
+
+        # We define the straight line segments on the upper surface pretending their is no
+        self.straight_line_segments()
+
+        # We can now get the blade spacing (G*) and chord length (C*) to calculate our solidity
+        self.get_g_star()
+        self.get_c_star()
+        self.get_solidity()
+        print(f"Initial Solidity: {self._sigma}")
+
+        # Finally we can generate our blade
+        self.generate_blade()
+
+        # We can re_caclulate the solidity
+        self._sigma = self._c_star / self._g_star
+
+        print(f"Final Solidity: {self._sigma}")
 
         return
 
@@ -310,24 +1375,6 @@ class SupersonicProfile:
         self._sigma = self._c_star / self._g_star
 
         return
-
-    def discretise_circular(self, N: float) -> None:
-        """This function discretises the circular sections of the turbine profiles
-
-        Args:
-            N (float): Number of Points for discretisation of the turbine Profile
-        """
-        alpha_l_array = np.linspace(self._alpha_l_i, self._alpha_l_o, N)
-
-        alpha_u_array = np.linspace(self._alpha_u_i, self._alpha_u_o, N)
-
-        # We can thus generate our x and y co-ordinates accordingly.
-
-        self._x_l_array = -self._R_l_star * np.sin(alpha_l_array)
-        self._y_l_array = self._R_l_star * np.cos(alpha_l_array)
-
-        self._x_u_array = -self._R_u_star * np.sin(alpha_u_array)
-        self._y_u_array = self._R_u_star * np.cos(alpha_u_array)
 
     def generate_surface_maps(self) -> None:
         """This function generates the surface maps for the s_position of the upper and lower surface of the blade profiles
@@ -584,8 +1631,7 @@ class SupersonicProfile:
         x_l, y_l = self.get_lower_surface_position(s_l=s_l)
 
         # We can get the mid point between these two points accordingly.
-        dic = {"x": (x_u + x_l)/2,
-               "y": (y_u + y_l)/2}
+        dic = {"x": (x_u + x_l) / 2, "y": (y_u + y_l) / 2}
 
         dic["x_1"] = x_u
         dic["y_1"] = y_u
@@ -601,11 +1647,11 @@ class SupersonicProfile:
         Returns:
             float: CAD Offset
         """
-        
+
         df = self.generate_xy()
-        
-        offset = - df["y"].min() - 0.5 * (df["y"].max() - df["y"].min())
-        
+
+        offset = -df["y"].min() - 0.5 * (df["y"].max() - df["y"].min())
+
         return offset
 
     def passage_position(self, s_l: float) -> dict[str, float]:
@@ -668,19 +1714,19 @@ class SupersonicProfile:
 
         # Now Shifting all our array points for the upper blade profiling accordingly
 
-        self._y_i_line_up = self._y_i_line + self._g_star
-        self._y_o_line_up = self._y_o_line + self._g_star
+        self._y_i_line_up = self._y_i_line  # + self._g_star
+        self._y_o_line_up = self._y_o_line  # self._g_star
 
         # Shifting transition points
-        self._ylkt_iu_up = self._ylkt_iu + self._g_star
-        self._ylkt_ou_up = self._ylkt_ou + self._g_star
+        self._ylkt_iu_up = self._ylkt_iu - self._g_star
+        self._ylkt_ou_up = self._ylkt_ou - self._g_star
 
         # Shifting Circular Points
-        self._y_u_array_up = self._y_u_array + self._g_star
+        self._y_u_array_up = self._y_u_array - self._g_star
 
         return
 
-    def plot_circles(self, NUMBER_OF_POINTS):
+    def plot_circles(self):
         # This function plots the circular arcs for visual inspection
 
         fig, ax = plt.subplots()
@@ -701,35 +1747,10 @@ class SupersonicProfile:
 
         ax.plot(self._xlkt_il, self._ylkt_il, label="Inlet Lower")
         ax.plot(self._xlkt_iu, self._ylkt_iu, label="Inlet Upper")
-        # ax.plot(self._xlkt_ol, self._ylkt_ol, label="Outlet Lower")
-        # ax.plot(self._xlkt_ou, self._ylkt_ou, label="Outlet Upper")
-        ax.legend()
-        ax.set_aspect("equal")
-        plt.show()
-
-    def plot_passage(self):
-        # This function plots the circular arcs for visual inspection
-
-        fig, ax = plt.subplots()
-
-        # We then plot our results
-
-        ax.plot(self._x_l_array, self._y_l_array)
-        ax.plot(self._x_u_array, self._y_u_array)
-        ax.plot(self._xlkt_il, self._ylkt_il, label="Inlet Lower")
-        ax.plot(self._xlkt_iu, self._ylkt_iu, label="Inlet Upper")
         ax.plot(self._xlkt_ol, self._ylkt_ol, label="Outlet Lower")
         ax.plot(self._xlkt_ou, self._ylkt_ou, label="Outlet Upper")
-        ax.plot(self._x_i_line, self._y_i_line)
-        ax.plot(self._x_o_line, self._y_o_line)
-
-        ax.set_ylabel(r"y* ($\frac{y}{r^*}$)")
-        ax.set_xlabel(r"x* ($\frac{x}{r^*}$)")
-
-        ax.set_aspect("equal")
-        ax.set_title(f"Normalised Flow Passage Profile")
-
         ax.legend()
+        ax.set_aspect("equal")
         plt.show()
 
     def plot_normalised(self):
@@ -876,71 +1897,15 @@ class SupersonicProfile:
 
         return df
 
-    def generate_xy(self) -> pd.DataFrame:
-        """Function that generates an x-y data frame of the co-ordinates of the turbine, that can be either plotted or used accordingly.
-
-        Returns:
-            pd.DataFrame: Dataframe of Profile Co-ordinates
-        """
-
-        # We simply need to create a master x-array and y-array, create a pandas dataframe, then export as csv
-        x_array = np.array([])
-        y_array = np.array([])
-        z_array = np.array([])
-
-        # We plot the Leading Edge Array,
-        x_array = np.append(x_array, self._x_i_line_sf[::-1])
-        y_array = np.append(y_array, self._y_i_line_sf[::-1])
-
-        # The then go to the inlet upper Transition
-        x_array = np.append(x_array, (self._xlkt_iu_sf)[-2:1:-1])
-        y_array = np.append(y_array, (self._ylkt_iu_sf)[-2:1:-1])
-
-        # # We then do the inlet Upper Circular element
-        x_array = np.append(x_array, self._x_u_array_sf)
-        y_array = np.append(y_array, self._y_u_array_sf)
-
-        # # We then do the outlet Upper Transition
-        x_array = np.append(x_array, self._xlkt_ou_sf[1:-1])
-        y_array = np.append(y_array, self._ylkt_ou_sf[1:-1])
-
-        # # We plote the Trailing Edge Array,
-        x_array = np.append(x_array, self._x_o_line_sf)
-        y_array = np.append(y_array, self._y_o_line_sf)
-
-        # # # We then do the outlet lower transition
-        x_array = np.append(x_array, self._xlkt_ol_sf[-2:1:-1])
-        y_array = np.append(y_array, self._ylkt_ol_sf[-2:1:-1])
-
-        # # We then do the lower circular element
-        x_array = np.append(x_array, (self._x_l_array_sf)[::-1])
-        y_array = np.append(y_array, (self._y_l_array_sf)[::-1])
-
-        # # We then do the inlet lower transition element
-        x_array = np.append(x_array, (self._xlkt_il_sf)[1:-2])
-        y_array = np.append(y_array, (self._ylkt_il_sf)[1:-2])
-
-        x_array = np.append(x_array, self._x_i_line_sf[-1])
-        y_array = np.append(y_array, self._y_i_line_sf[-1])
-
-        z_array = np.zeros(x_array.size)
-
-        # We need to center in the y_axis- to do this, we will get the maximum and minimum value for the y, half it and shift accordingly.
-        # y_array = y_array - y_array.min() - 0.5 * (y_array.max() - y_array.min())
-
-        df = pd.DataFrame(data={"x": x_array * 1e3, "y": y_array * 1e3, "z": z_array})
-
-        return df
-
     def get_xy_mean_line(self) -> pd.DataFrame:
         """Function that gets the mean line between the upper and lower surfaces of the turbine
 
         Returns:
             pd.DataFrame: Dataframe containing the mean_line co-ordinates of the upper and lower surface
         """
-        
+
         ####################################### Upper Surface Profile #######################################
-        
+
         x_array_u = np.array([])
         y_array_u = np.array([])
 
@@ -987,7 +1952,7 @@ class SupersonicProfile:
         # We can now inverse the order of the array now
         x_array_l = x_array_l[::-1]
         y_array_l = y_array_l[::-1]
-        
+
         ######################################### Normalising the distances #########################################
 
         y_array = np.append(y_array_l, y_array_u)
@@ -997,90 +1962,8 @@ class SupersonicProfile:
         y_array_u = y_array_u - y_array.min() - 0.5 * (y_array.max() - y_array.min())
 
         ######################################### Interpolation #########################################
-        
 
         df = pd.DataFrame(data={"x": x_array * 1e3, "y": y_array * 1e3, "z": z_array})
-        
-
-    def M_i_max(self):
-        """
-        This function solves for the critical inlet mach number for the profile to ensure the geometry can be started succesfully.
-
-        In supersonic turbines, it is critical that the geometry can be started up under low flow conditions.
-
-        This particularly important at startup conditions as the relative inlet velocities are at their highest levels (due to blade speeds being low).
-
-        We can solve for the maximum acceptable inlet mach number/ prantl meyer angle and see if self-starting is possible for the turbine.
-
-        """
-
-        # First we need to solve for our k_star_max based on our upper and lowe mach numbers we have selected
-        INTEGRAL_NUMBER = 100  # TODO: Fix this magic number
-        GAMMA = self._fluid.get_gamma()
-
-        self._k_star = k_star_max(
-            M_star_l=self._M_l_star,
-            M_star_u=self._M_u_star,
-            gamma=GAMMA,
-            n=INTEGRAL_NUMBER,
-        )
-
-        # Now we know our k_star max, we can figure out what our Q and C are for the turbine accordingly
-
-        self._Q_blade = Q(
-            M_star_l=self._M_l_star,
-            M_star_u=self._M_u_star,
-            gamma=GAMMA,
-            n=INTEGRAL_NUMBER,
-        )
-
-        self._C_blade = C(
-            M_star_l=self._M_l_star,
-            M_star_u=self._M_u_star,
-            gamma=GAMMA,
-            n=INTEGRAL_NUMBER,
-            k_star=self._k_star,
-        )
-
-        # From this, we can figure out what our shock pressure ratio is for the gas.
-
-        self._p_rat = shock_pressure_rat(Q=self._Q_blade, C=self._C_blade)
-
-        # Now that we know our shock pressure ratio, we can now calculate back our M_star_i_max value
-
-        self._M_i_star_max = M_i_star_max(p_rat=self._p_rat, gamma=GAMMA)
-
-        # We can back calculate for what this mach number
-
-        self._M_i_max = inv_M_star(gamma=GAMMA, M_star=self._M_i_star_max)
-
-        self._v_i_max = prandtl_meyer(GAMMA, self._M_i_star_max)
-
-        return self._M_i_max
-
-    def M_u_max(self):
-        """
-        This function solves for the maximum upper surface mach number inorder to prevent flow seperation
-        """
-        GAMMA = self._fluid.get_gamma()
-
-        self._M_u_star_max = M_star_u_max(M_star_o=self._M_o_star, gamma=GAMMA)
-
-        self._M_u_max = inv_M_star(gamma=GAMMA, M_star=self._M_u_star_max)
-
-        return
-
-    def M_l_min(self):
-        """
-        This function solves for the minimum lower surface mach number to avoid flow seperation of the gas
-        """
-        GAMMA = self._fluid.get_gamma()
-
-        self._M_l_star_min = M_star_l_min(m_star_i=self._M_i_star, gamma=GAMMA)
-
-        self._M_l_min = inv_M_star(gamma=GAMMA, M_star=self._M_l_star_min)
-
-        return
 
     def scale_coords(self, sf: float) -> None:
         """This function scales the geometry, based on a scaling factor for the geometry (either R_star_a or a chord based scale factor)
@@ -1096,6 +1979,7 @@ class SupersonicProfile:
 
         self._x_u_array_sf = self._x_u_array * sf
         self._y_u_array_sf = self._y_u_array_up * sf
+        self._y_u_array_sf_cfd = self._y_u_array * sf
 
         self._xlkt_il_sf = self._xlkt_il * sf
         self._ylkt_il_sf = self._ylkt_il * sf
@@ -1105,85 +1989,89 @@ class SupersonicProfile:
 
         self._xlkt_iu_sf = self._xlkt_iu * sf
         self._ylkt_iu_sf = self._ylkt_iu_up * sf
+        self._ylkt_iu_sf_cfd = self._ylkt_iu * sf
 
         self._xlkt_ou_sf = self._xlkt_ou * sf
         self._ylkt_ou_sf = self._ylkt_ou_up * sf
+        self._ylkt_ou_sf_cfd = self._ylkt_ou * sf
 
         self._x_i_line_sf = self._x_i_line * sf
         self._y_i_line_sf = self._y_i_line_up * sf
+        self._y_i_line_sf_cfd = self._y_i_line * sf
 
         self._x_o_line_sf = self._x_o_line * sf
         self._y_o_line_sf = self._y_o_line_up * sf
+        self._y_o_line_sf_cfd = self._y_o_line * sf
 
         return
-    
+
     def generate_mesh_upper(self, n: int = 1000) -> pd.DataFrame:
         """This function gets the upper surface mesh contour
-        
+
         Args:
             n (int, optional): Number of Points on the Upper Surface. Defaults to 1000.
 
         Returns:
             pd.DataFrame: Contour of the Upper Surface
         """
-        
+
         # We get the offset
         offset = self.get_cad_shift()
-        
+
         self.generate_surface_maps()
-        
+
         x_c = []
         y_c = []
-        
+
         for x in np.linspace(0, 1, n):
             camber = self.camber_position(x)
-            
+
             x_c.append(camber["x"])
             y_c.append(camber["y"])
-            
-        data ={
-            "x": np.array(x_c)*1e3, 
-            "y": (np.array(y_c) + self._t/2)*1e3 - offset,
-            "z": np.zeros(np.array(x_c).size)
-            }
-            
+
+        data = {
+            "x": np.array(x_c) * 1e3,
+            "y": (np.array(y_c) + self._t / 2) * 1e3 - offset,
+            "z": np.zeros(np.array(x_c).size),
+        }
+
         df = pd.DataFrame(data)
-        
+
         return df
-    
+
     def generate_mesh_lower(self, n: float = 1000) -> pd.DataFrame:
         """This function gets the lower surface mesh contour
-        
+
         Args:
             n (float, optional): Number of Points on the Upper Surface. Defaults to 1000.
 
         Returns:
             pd.DataFrame: Contour of the Upper Surface
         """
-        
+
         # We get the offset
         offset = self.get_cad_shift()
-        
+
         self.generate_surface_maps()
-        
+
         x_c = []
         y_c = []
         z_c = []
-        
+
         for x in np.linspace(0, 1, n):
             camber = self.camber_position(x)
-            
+
             x_c.append(camber["x"])
             y_c.append(camber["y"])
-            
+
         data = {
-            "x": (np.array(x_c))*1e3, 
-            "y": (np.array(y_c) - self._t/2)*1e3 - offset,
-            "z": np.zeros(np.array(x_c).size)
-            }
-        
+            "x": (np.array(x_c)) * 1e3,
+            "y": (np.array(y_c) - self._t / 2) * 1e3 - offset,
+            "z": np.zeros(np.array(x_c).size),
+        }
+
         df = pd.DataFrame(data)
-        
+
         return df
 
 
@@ -1219,7 +2107,7 @@ class SymmetricFiniteEdge(SupersonicProfile):
             beta_e=beta_ei * ANGLE_CONVERSION,
             beta_i=beta_i * ANGLE_CONVERSION,
             M_i=M_i,
-            gamma=fluid.get_gamma(),
+            gamma=fluid.gamma,
         )
 
         # We can then Initialise for our turbine
@@ -1253,6 +2141,7 @@ class SymmetricFiniteEdge(SupersonicProfile):
         # We solve for the upper maximum and lower minimum mach numbers to prevent flow speeration
         self.M_u_max()
         self.M_l_min()
+        print(f"Bing")
 
         # We solve for the maximum inlet mach number (at turbine inlet) before the turbine would unstarts
         self.M_i_max()
@@ -1270,7 +2159,6 @@ class SymmetricFiniteEdge(SupersonicProfile):
         self.get_g_star()
         self.get_c_star()
         self.get_solidity()
-        print(f"Initial Solidity: {self._sigma}")
 
         # We can now generate the finite edge thickness
         self.generate_finite_edge()
@@ -1283,8 +2171,6 @@ class SymmetricFiniteEdge(SupersonicProfile):
 
         # We can re_caclulate the solidity
         self._sigma = self._c_star / self._g_star
-
-        print(f"Final Solidity: {self._sigma}")
 
         return
 
