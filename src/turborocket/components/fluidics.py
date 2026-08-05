@@ -68,15 +68,15 @@ class LiquidValve:
             float: Mass Flow Rate (kg/s)
         """
 
-        p1 = upstr.get_pressure()
+        p1 = upstr.p
 
-        p2 = downstr.get_pressure()
+        p2 = downstr.p
 
         if p1 > p2:
-            rho = upstr.get_density()
+            rho = upstr.rho
 
         else:
-            rho = downstr.get_density()
+            rho = downstr.rho
 
         a = self._cda * self._pos
 
